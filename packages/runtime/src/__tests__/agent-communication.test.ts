@@ -18,11 +18,6 @@ import type { AgentMatrixConfig, AgentMessage, JsonRpcRequest } from '@wanman/co
 import {
   RPC_METHODS,
   RPC_ERRORS,
-  PRODUCTION_AGENTS,
-  CEO_AGENT,
-  FINANCE_AGENT,
-  DEVOPS_AGENT,
-  DEV_AGENT,
 } from '@wanman/core'
 import { Supervisor } from '../supervisor.js'
 import { LOOPBACK_LISTEN_AVAILABLE } from './loopback-capability.js'
@@ -430,13 +425,18 @@ describe('Agent Inter-Communication E2E', () => {
     })
   })
 
-  describe('Production agent config', () => {
+  // Skipped in OSS: the original PRODUCTION_AGENTS preset (ceo/finance/devops/dev/...)
+  // lived in the proprietary @wanman/core and was removed during the OSS split.
+  // The scenarios below reference those agent names directly (saifuri incident, MRR,
+  // etc.) and would need a rewrite to be framework-generic. Keeping the block as
+  // `describe.skip` documents intent without deleting the SaaS reference scenario.
+  describe.skip('Production agent config (requires SaaS PRODUCTION_AGENTS preset)', () => {
     let sv: Supervisor
 
     beforeEach(async () => {
       steerCalls.length = 0
       sv = new Supervisor({
-        agents: PRODUCTION_AGENTS,
+        agents: [],
         dbPath: ':memory:',
         port: 0,
       })
