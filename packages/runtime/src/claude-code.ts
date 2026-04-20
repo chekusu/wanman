@@ -13,7 +13,7 @@ import { createLogger } from './logger.js';
 const log = createLogger('claude-code');
 
 /** Events emitted by the Claude Code process via JSONL stdout */
-export interface ClaudeEvent {
+export interface ClaudeEvent extends Record<string, unknown> {
   type: string;
   subtype?: string;
   tool_name?: string;
