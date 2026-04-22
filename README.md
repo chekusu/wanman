@@ -22,10 +22,18 @@ cd wanman.dev
 pnpm install
 pnpm build
 
-# Point wanman at any git repo and hand it over to the agent matrix.
-cd /path/to/any/git/repo
-wanman takeover .
+# Run from source; no npm package publish is required.
+pnpm --filter @wanman/cli exec wanman takeover /path/to/any/git/repo
 ```
+
+If you want a single-file CLI bundle instead:
+
+```bash
+pnpm --filter @wanman/cli standalone
+node packages/cli/dist/wanman.mjs takeover /path/to/any/git/repo
+```
+
+If `wanman` is already on your `PATH`, you can also run `wanman takeover .` from inside the target repository.
 
 See [`docs/quickstart.md`](docs/quickstart.md) for the full walkthrough.
 

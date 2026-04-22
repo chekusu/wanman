@@ -22,10 +22,18 @@ cd wanman.dev
 pnpm install
 pnpm build
 
-# 将 wanman 指向任意 git 仓库，并把它交给 agent matrix 接管。
-cd /path/to/any/git/repo
-wanman takeover .
+# 从源码直接运行；不需要先发布 npm 包。
+pnpm --filter @wanman/cli exec wanman takeover /path/to/any/git/repo
 ```
+
+如果你想生成一个单文件 CLI bundle：
+
+```bash
+pnpm --filter @wanman/cli standalone
+node packages/cli/dist/wanman.mjs takeover /path/to/any/git/repo
+```
+
+如果 `wanman` 已经在你的 `PATH` 中，也可以在目标仓库内直接运行 `wanman takeover .`。
 
 完整流程见 [`docs/quickstart.zh.md`](docs/quickstart.zh.md)。
 

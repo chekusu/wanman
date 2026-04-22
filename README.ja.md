@@ -22,10 +22,18 @@ cd wanman.dev
 pnpm install
 pnpm build
 
-# wanman を任意の git リポジトリに向けて、agent matrix に引き渡します。
-cd /path/to/any/git/repo
-wanman takeover .
+# ソースから直接実行します。npm package の公開は不要です。
+pnpm --filter @wanman/cli exec wanman takeover /path/to/any/git/repo
 ```
+
+単一ファイルの CLI bundle が必要な場合:
+
+```bash
+pnpm --filter @wanman/cli standalone
+node packages/cli/dist/wanman.mjs takeover /path/to/any/git/repo
+```
+
+`wanman` がすでに `PATH` にある場合は、対象リポジトリ内で `wanman takeover .` を直接実行できます。
 
 完全な手順は [`docs/quickstart.ja.md`](docs/quickstart.ja.md) を参照してください。
 
