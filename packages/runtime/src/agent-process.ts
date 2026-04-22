@@ -81,6 +81,12 @@ function resolveCodexReasoningEffort(extraEnv: Record<string, string>, runtime: 
   }
 }
 
+function resolveCodexFast(extraEnv: Record<string, string>, runtime: 'claude' | 'codex'): boolean {
+  if (runtime !== 'codex') return false;
+  const raw = (extraEnv['WANMAN_CODEX_FAST'] ?? process.env['WANMAN_CODEX_FAST'] ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
+}
+
 export class AgentProcess {
   readonly definition: AgentDefinition;
   private relay: MessageTransport;
@@ -211,17 +217,20 @@ export class AgentProcess {
           : {};
         const runEnv = { ...this.extraEnv, ...dynamicEnv };
         const reasoningEffort = resolveCodexReasoningEffort(runEnv, runtime);
+        const fast = resolveCodexFast(runEnv, runtime);
         log.info('spawning agent', {
           agent: this.definition.name,
           runtime,
           model,
           ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(fast ? { fast: true } : {}),
         });
 
         this.currentProcess = createAgentAdapter(runtime).startRun({
           runtime,
           model,
           reasoningEffort,
+          fast,
           systemPrompt: this.definition.systemPrompt,
           cwd: this.workDir,
           initialMessage: prompt,
@@ -347,18 +356,21 @@ export class AgentProcess {
       : {};
     const runEnv = { ...this.extraEnv, ...dynamicEnv };
     const reasoningEffort = resolveCodexReasoningEffort(runEnv, runtime);
+    const fast = resolveCodexFast(runEnv, runtime);
     log.info('triggering on-demand agent', {
       agent: this.definition.name,
       messageCount: pending.length,
       runtime,
       model,
       ...(reasoningEffort ? { reasoningEffort } : {}),
+      ...(fast ? { fast: true } : {}),
     });
 
     this.currentProcess = createAgentAdapter(runtime).startRun({
       runtime,
       model,
       reasoningEffort,
+      fast,
       systemPrompt: this.definition.systemPrompt,
       cwd: this.workDir,
       initialMessage: prompt,

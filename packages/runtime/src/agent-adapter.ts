@@ -21,6 +21,13 @@ export interface AgentRunOptions {
   runtime: AgentRuntime;
   model: ModelTier;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+  /**
+   * Codex-only: enable fast mode (`/fast on`).
+   * Adds `-c service_tier="fast"` and `-c features.fast_mode=true`,
+   * which ~1.5x throughput at ~2x credit cost.
+   * Ignored when runtime !== 'codex'.
+   */
+  fast?: boolean;
   systemPrompt: string;
   cwd: string;
   initialMessage?: string;

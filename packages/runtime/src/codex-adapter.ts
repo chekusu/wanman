@@ -87,6 +87,10 @@ export function spawnCodexExec(opts: AgentRunOptions): AgentRunHandle {
   if (reasoningEffort) {
     codexArgs.push('-c', `model_reasoning_effort="${reasoningEffort}"`);
   }
+  if (opts.fast) {
+    codexArgs.push('-c', `service_tier="fast"`);
+    codexArgs.push('-c', `features.fast_mode=true`);
+  }
   codexArgs.push(prompt);
 
   const runAsUser = opts.runAsUser;
@@ -101,6 +105,7 @@ export function spawnCodexExec(opts: AgentRunOptions): AgentRunHandle {
     cwd: opts.cwd,
     ...(model ? { model } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(opts.fast ? { fast: true } : {}),
   });
 
   const proc = spawn(cmd, args, {

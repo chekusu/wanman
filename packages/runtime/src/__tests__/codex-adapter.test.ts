@@ -115,6 +115,42 @@ describe('spawnCodexExec', () => {
     );
   });
 
+  it('passes fast mode through as service_tier and fast_mode config overrides', () => {
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+
+    spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      fast: true,
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+      initialMessage: 'Do the task',
+    });
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    expect(args).toContain('service_tier="fast"');
+    expect(args).toContain('features.fast_mode=true');
+  });
+
+  it('omits fast mode flags when fast is false or undefined', () => {
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+
+    spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+      initialMessage: 'Do the task',
+    });
+
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    expect(args.some((v) => v.includes('service_tier'))).toBe(false);
+    expect(args.some((v) => v.includes('fast_mode'))).toBe(false);
+  });
+
   it('does not pass through non-codex model identifiers', () => {
     const proc = createMockProc();
     spawnMock.mockReturnValue(proc);
