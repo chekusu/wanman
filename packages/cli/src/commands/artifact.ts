@@ -222,7 +222,7 @@ function extractPositional(args: string[]): string {
   const parts: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i]!.startsWith('--')) {
-      i++; // skip flag value
+      if (args[i] !== '--allow-nonstandard') i++; // skip flag value
       continue;
     }
     parts.push(args[i]!);

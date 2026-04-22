@@ -9,20 +9,20 @@ interface ConcreteTakeoverOptions {
   enableBrain: boolean
 }
 
-const preparedLaunch = {
-  id: 'launch-1',
+const preparedPlan = {
+  id: 'plan-1',
 }
 
 const adapters = vi.hoisted(() => ({
   runGoal: vi.fn(),
-  prepareTakeoverLaunch: vi.fn(),
-  executePreparedTakeoverLaunch: vi.fn(),
+  prepareTakeoverPlan: vi.fn(),
+  executePreparedTakeoverPlan: vi.fn(),
 }))
 
-const hostSdkAdapters: WanmanHostSdkAdapters<Record<string, never>, typeof preparedLaunch, ConcreteTakeoverOptions> = {
+const hostSdkAdapters: WanmanHostSdkAdapters<Record<string, never>, typeof preparedPlan, ConcreteTakeoverOptions> = {
   runGoal: adapters.runGoal,
-  prepareTakeoverLaunch: adapters.prepareTakeoverLaunch,
-  executePreparedTakeoverLaunch: adapters.executePreparedTakeoverLaunch,
+  prepareTakeoverPlan: adapters.prepareTakeoverPlan,
+  executePreparedTakeoverPlan: adapters.executePreparedTakeoverPlan,
   normalizeTakeoverOptions(options) {
     if ('runtime' in options && typeof options.runtime === 'string') {
       return options as ConcreteTakeoverOptions
@@ -41,7 +41,7 @@ const hostSdkAdapters: WanmanHostSdkAdapters<Record<string, never>, typeof prepa
 describe('createWanmanHostSdk', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    adapters.prepareTakeoverLaunch.mockReturnValue(preparedLaunch)
+    adapters.prepareTakeoverPlan.mockReturnValue(preparedPlan)
   })
 
   it('runs with baseline defaults', async () => {
@@ -78,24 +78,24 @@ describe('createWanmanHostSdk', () => {
     )
   })
 
-  it('normalizes takeover launches around infinite defaults', async () => {
+  it('normalizes takeover plans around infinite defaults', async () => {
     const sdk = createWanmanHostSdk({}, hostSdkAdapters)
 
-    const launch = sdk.prepareTakeover({
+    const plan = sdk.prepareTakeover({
       projectPath: '/repo',
       goalOverride: 'stabilize release',
     })
-    await sdk.executePreparedTakeover(launch)
+    await sdk.executePreparedTakeover(plan)
 
-    expect(adapters.prepareTakeoverLaunch).toHaveBeenCalledWith({
+    expect(adapters.prepareTakeoverPlan).toHaveBeenCalledWith({
       projectPath: '/repo',
       goalOverride: 'stabilize release',
       runtime: 'claude',
       githubToken: undefined,
       enableBrain: true,
     })
-    expect(adapters.executePreparedTakeoverLaunch).toHaveBeenCalledWith(
-      preparedLaunch,
+    expect(adapters.executePreparedTakeoverPlan).toHaveBeenCalledWith(
+      preparedPlan,
       expect.objectContaining({
         infinite: true,
         loops: Infinity,

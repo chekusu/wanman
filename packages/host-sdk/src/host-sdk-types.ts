@@ -19,13 +19,13 @@ export type WanmanHostRunInvocation = RunOptions | WanmanHostRunOptions
 
 export interface WanmanHostSdk<
   TProjectRunSpec = unknown,
-  TPreparedTakeoverLaunch = unknown,
+  TPreparedTakeoverPlan = unknown,
   TTakeoverInvocation = WanmanHostTakeoverOptions,
 > {
   run(goal: string, options?: WanmanHostRunInvocation, spec?: TProjectRunSpec): Promise<void>
-  prepareTakeover(options: TTakeoverInvocation): TPreparedTakeoverLaunch
+  prepareTakeover(options: TTakeoverInvocation): TPreparedTakeoverPlan
   executePreparedTakeover(
-    launch: TPreparedTakeoverLaunch,
+    plan: TPreparedTakeoverPlan,
     options?: WanmanHostRunInvocation,
   ): Promise<void>
   takeover(

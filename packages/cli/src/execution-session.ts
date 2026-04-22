@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { execSync } from 'node:child_process'
+import type { AgentDefinition, AgentMatrixConfig, AgentRuntime } from '@wanman/core'
 import type { ProjectRunSpec as BaseProjectRunSpec, RunOptions } from '@wanman/host-sdk'
 import { Heartbeat, LoopEventBus, LoopLogger } from './loop-observability.js'
 import {
@@ -18,7 +19,8 @@ import { countTransitions, classifyLoop, type LoopSnapshot, type LoopClassificat
 export type { HealthAgent, RuntimeClient, TaskInfo } from './runtime-client.js'
 export type { RunOptions } from '@wanman/host-sdk'
 
-function loadEnvFile(root: string, env: NodeJS.ProcessEnv = process.env): void {
+/** @internal exported for testing */
+export function loadEnvFile(root: string, env: NodeJS.ProcessEnv = process.env): void {
   const envPath = path.join(root, '.env')
   if (!fs.existsSync(envPath)) return
   for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
@@ -63,7 +65,7 @@ export interface ExecutionHooks {
   shouldStop?(ctx: PollExecutionContext): Promise<boolean>
 }
 
-interface EmbeddedAssets {
+export interface EmbeddedAssets {
   ENTRYPOINT_JS: string
   CLI_JS: string
   AGENT_CONFIGS: Record<string, string>
@@ -84,7 +86,8 @@ async function getEmbeddedAssets(): Promise<EmbeddedAssets | null> {
   }
 }
 
-function findProjectRoot(): string | null {
+/** @internal exported for testing */
+export function findProjectRoot(): string | null {
   let dir = process.cwd()
   for (let i = 0; i < 10; i++) {
     if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir
@@ -95,7 +98,8 @@ function findProjectRoot(): string | null {
   return null
 }
 
-function isStale(distFile: string, srcDir: string): boolean {
+/** @internal exported for testing */
+export function isStale(distFile: string, srcDir: string): boolean {
   if (!fs.existsSync(distFile)) return true
   try {
     const files = execSync(
@@ -125,7 +129,7 @@ function buildIfNeeded(root: string): void {
   }
 }
 
-interface LocalRunLayout {
+export interface LocalRunLayout {
   baseDir: string
   configPath: string
   workspaceRoot: string
@@ -173,7 +177,7 @@ function writeEmbeddedAgentWorkspace(assets: EmbeddedAssets, targetDir: string):
   for (const [name, content] of Object.entries(assets.AGENT_SKILLS)) {
     const agentDir = path.join(targetDir, name)
     fs.mkdirSync(agentDir, { recursive: true })
-    fs.writeFileSync(path.join(agentDir, 'CLAUDE.md'), content)
+    fs.writeFileSync(path.join(agentDir, 'AGENT.md'), content)
   }
 }
 
@@ -186,7 +190,110 @@ function writeEmbeddedSharedSkills(assets: EmbeddedAssets, targetDir: string): v
   }
 }
 
-function materializeLocalRunLayout(params: {
+const DEFAULT_RUN_CONFIG_NAME = 'built-in-local-agents.json'
+
+const DEFAULT_RUN_CLI_INSTRUCTIONS = [
+  'Use `wanman recv` for messages, `wanman task list` for work state, and `wanman send <agent> "<message>"` to coordinate.',
+  'Use `wanman send human --type decision "<question>"` when a human choice is required.',
+  'Keep outputs under your workspace output directory and keep task updates concrete.',
+].join('\n')
+
+function normalizeDefaultRuntime(runtime?: AgentRuntime): AgentRuntime {
+  return runtime === 'codex' ? 'codex' : 'claude'
+}
+
+function withWorkerEndpoint(agent: AgentDefinition, opts: RunOptions): AgentDefinition {
+  if (!opts.workerUrl || agent.name === 'ceo') return agent
+  return {
+    ...agent,
+    runtime: 'claude',
+    model: opts.workerModel ?? agent.model,
+    baseUrl: opts.workerUrl,
+    ...(opts.workerKey ? { apiKey: opts.workerKey } : {}),
+  }
+}
+
+function defaultAgent(
+  opts: RunOptions,
+  name: 'ceo' | 'dev' | 'feedback',
+  lifecycle: AgentDefinition['lifecycle'],
+  tier: 'high' | 'standard',
+  role: string,
+): AgentDefinition {
+  const runtime = opts.runtime ? normalizeDefaultRuntime(opts.runtime) : undefined
+  const agent: AgentDefinition = {
+    name,
+    lifecycle,
+    ...(runtime ? { runtime } : {}),
+    model: tier,
+    systemPrompt: `${role}\n\n${DEFAULT_RUN_CLI_INSTRUCTIONS}`,
+  }
+  return withWorkerEndpoint(agent, opts)
+}
+
+export function createDefaultLocalRunConfigText(opts: RunOptions): string {
+  const config: AgentMatrixConfig = {
+    agents: [
+      defaultAgent(
+        opts,
+        'ceo',
+        '24/7',
+        'high',
+        'You are the CEO agent. Turn the run goal into a small backlog, assign work, review progress, and produce a concise final deliverable.',
+      ),
+      defaultAgent(
+        opts,
+        'dev',
+        'on-demand',
+        'standard',
+        'You are the Dev agent. Implement assigned code, docs, or analysis tasks end-to-end and report exact files or outputs changed.',
+      ),
+      defaultAgent(
+        opts,
+        'feedback',
+        'on-demand',
+        'standard',
+        'You are the Feedback agent. Review outputs, identify gaps, and convert useful observations into concrete follow-up tasks.',
+      ),
+    ],
+    port: 3120,
+  }
+  return JSON.stringify(config, null, 2)
+}
+
+function defaultAgentGuide(agent: AgentDefinition): string {
+  return [
+    `# ${agent.name}`,
+    '',
+    agent.systemPrompt,
+    '',
+    '## Operating Rules',
+    '',
+    '- Read current messages with `wanman recv` before starting new work.',
+    '- Check assigned work with `wanman task list` and update the team through `wanman send`.',
+    '- Put files you create under `output/` unless the task explicitly asks for repository changes.',
+  ].join('\n')
+}
+
+function writeMissingAgentGuides(configText: string, workspaceRoot: string): void {
+  let config: Pick<AgentMatrixConfig, 'agents'>
+  try {
+    config = JSON.parse(configText) as AgentMatrixConfig
+  } catch {
+    return
+  }
+  for (const agent of config.agents ?? []) {
+    const agentDir = path.join(workspaceRoot, agent.name)
+    const guidePath = path.join(agentDir, 'AGENT.md')
+    fs.mkdirSync(agentDir, { recursive: true })
+    if (!fs.existsSync(guidePath)) {
+      fs.writeFileSync(guidePath, defaultAgentGuide(agent))
+    }
+  }
+}
+
+/** @internal exported for testing */
+export function materializeLocalRunLayout(params: {
   runId: string
   outputDir: string
   projectDir?: string
@@ -195,10 +302,6 @@ function materializeLocalRunLayout(params: {
   configText: string
   gitRoot?: string
 }): LocalRunLayout {
-  if (!params.root && !params.embedded) {
-    throw new Error('Cannot materialize local run assets without monorepo sources or embedded assets.')
-  }
-
   const baseDir = path.resolve(params.outputDir, '.wanman-local', params.runId)
   fs.rmSync(baseDir, { recursive: true, force: true })
   fs.mkdirSync(baseDir, { recursive: true })
@@ -228,6 +331,7 @@ function materializeLocalRunLayout(params: {
     writeEmbeddedAgentWorkspace(params.embedded, workspaceRoot)
     writeEmbeddedSharedSkills(params.embedded, sharedSkillsDir)
   }
+  writeMissingAgentGuides(localizedConfigText, workspaceRoot)
 
   return {
     baseDir,
@@ -250,44 +354,28 @@ function getDb9Token(env: NodeJS.ProcessEnv = process.env): string | undefined {
   }
 }
 
-function selectConfig(root: string, opts: RunOptions, db9Token?: string): string {
-  if (opts.configPath) return path.resolve(opts.configPath)
-  const hybrid = path.join(root, 'apps/container/agents.e2e-hybrid.json')
-  const local = path.join(root, 'apps/container/agents.local.json')
-  const e2e = path.join(root, 'apps/container/agents.e2e.json')
-
-  if (opts.workerUrl && fs.existsSync(hybrid)) return hybrid
-  if (db9Token && fs.existsSync(local)) return local
-  return e2e
-}
-
-function selectConfigName(opts: RunOptions, db9Token?: string): string {
-  if (opts.workerUrl) return 'agents.e2e-hybrid.json'
-  if (db9Token) return 'agents.local.json'
-  return 'agents.e2e.json'
-}
-
-function getSelectedConfigText(
+export function resolveSelectedConfigName(
   projectDir: string | null | undefined,
-  root: string | null,
-  embedded: EmbeddedAssets | null,
   opts: RunOptions,
-  db9Token?: string,
 ): string {
+  if (opts.configPath) return path.basename(opts.configPath)
+  if (projectDir) return 'agents.json (project)'
+  return DEFAULT_RUN_CONFIG_NAME
+}
+
+export function getSelectedConfigText(
+  projectDir: string | null | undefined,
+  opts: RunOptions,
+): string {
+  if (opts.configPath) {
+    return fs.readFileSync(path.resolve(opts.configPath), 'utf-8')
+  }
+
   if (projectDir) {
     return fs.readFileSync(path.join(projectDir, 'agents.json'), 'utf-8')
   }
 
-  if (embedded) {
-    const configName = selectConfigName(opts, db9Token)
-    const config = embedded.AGENT_CONFIGS[configName]
-    if (!config) {
-      throw new Error(`Embedded config '${configName}' not found. Available: ${Object.keys(embedded.AGENT_CONFIGS).join(', ')}`)
-    }
-    return config
-  }
-
-  return fs.readFileSync(selectConfig(root!, opts, db9Token), 'utf-8')
+  return createDefaultLocalRunConfigText(opts)
 }
 
 function getRunOutputDir(outputDir: string, brainName?: string): string {
@@ -324,7 +412,8 @@ async function exportTasks(runtime: RuntimeClient, localDir: string): Promise<vo
   }
 }
 
-async function downloadLocalDeliverables(
+/** @internal exported for testing */
+export async function downloadLocalDeliverables(
   runtime: RuntimeClient,
   outputDir: string,
   workspaceRoot: string,
@@ -352,7 +441,8 @@ async function downloadLocalDeliverables(
   await exportTasks(runtime, localDir)
 }
 
-async function downloadLocalRepoPatch(
+/** @internal exported for testing */
+export async function downloadLocalRepoPatch(
   outputDir: string,
   repoRoot: string,
   brainName?: string,
@@ -404,7 +494,8 @@ export function buildRunKickoffPayload(goal: string): string {
   ].join(' ')
 }
 
-async function maybeSendRunKickoff(runtime: RuntimeClient, goal: string, from = 'run-bootstrap'): Promise<boolean> {
+/** @internal exported for testing */
+export async function maybeSendRunKickoff(runtime: RuntimeClient, goal: string, from = 'run-bootstrap'): Promise<boolean> {
   const tasks = await runtime.listTasks().catch(() => [])
   if (tasks.length > 0) return false
   await runtime.sendMessage({
@@ -417,7 +508,8 @@ async function maybeSendRunKickoff(runtime: RuntimeClient, goal: string, from = 
   return true
 }
 
-async function observeExecutionBackend(params: {
+/** @internal exported for testing */
+export async function observeExecutionBackend(params: {
   backend: LocalSupervisorHandle
   goal: string
   opts: RunOptions
@@ -704,20 +796,10 @@ export async function runExecutionSession(
   const standalone = !root && !!embedded
 
   if (root) loadEnvFile(root, hostEnv)
-  if (!projectDir && !root && !embedded) {
-    throw new Error(
-      'Cannot find agents.json in current directory, monorepo root, or embedded assets.\n'
-      + 'Either cd into a project directory with agents.json, run from the monorepo, or use the standalone binary.',
-    )
-  }
 
   const db9Token = opts.noBrain ? undefined : getDb9Token(hostEnv)
-  let configName: string
-  if (projectDir) configName = 'agents.json (project)'
-  else if (standalone) configName = selectConfigName(opts, db9Token)
-  else configName = path.basename(selectConfig(root!, opts, db9Token))
-
-  const configText = getSelectedConfigText(projectDir, root, embedded, opts, db9Token)
+  const configName = resolveSelectedConfigName(projectDir, opts)
+  const configText = getSelectedConfigText(projectDir, opts)
   const sessionPlan = createRunSessionPlan({
     goal,
     opts,

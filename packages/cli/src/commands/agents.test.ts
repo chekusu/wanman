@@ -81,4 +81,46 @@ describe('agentsCommand', () => {
 
     await expect(agentsCommand()).rejects.toThrow('process.exit')
   })
+
+  it('spawns a dynamic agent clone', async () => {
+    mockRpcCall.mockResolvedValue({
+      jsonrpc: '2.0', id: 1,
+      result: { name: 'feedback-2' },
+    })
+
+    await agentsCommand(['spawn', 'feedback', 'feedback-2'])
+
+    expect(mockRpcCall).toHaveBeenCalledWith('agent.spawn', { template: 'feedback', name: 'feedback-2' })
+    expect(console.log).toHaveBeenCalledWith('Spawned: feedback-2 (clone of feedback)')
+  })
+
+  it('requires a spawn template', async () => {
+    await expect(agentsCommand(['spawn'])).rejects.toThrow('process.exit')
+
+    expect(mockRpcCall).not.toHaveBeenCalled()
+    expect(console.error).toHaveBeenCalledWith('Usage: wanman agents spawn <template> [name]')
+  })
+
+  it('destroys a dynamic agent clone', async () => {
+    mockRpcCall.mockResolvedValue({
+      jsonrpc: '2.0', id: 1,
+      result: { destroyed: true },
+    })
+
+    await agentsCommand(['destroy', 'feedback-2'])
+
+    expect(mockRpcCall).toHaveBeenCalledWith('agent.destroy', { name: 'feedback-2' })
+    expect(console.log).toHaveBeenCalledWith('Destroyed: feedback-2')
+  })
+
+  it('exits when destroy is rejected by the supervisor', async () => {
+    mockRpcCall.mockResolvedValue({
+      jsonrpc: '2.0', id: 1,
+      result: { destroyed: false },
+    })
+
+    await expect(agentsCommand(['destroy', 'ceo'])).rejects.toThrow('process.exit')
+
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Cannot destroy 'ceo'"))
+  })
 })

@@ -12,8 +12,8 @@ describe('ECHO_AGENT', () => {
     expect(ECHO_AGENT.lifecycle).toBe('24/7')
   })
 
-  it('should use haiku model', () => {
-    expect(ECHO_AGENT.model).toBe('haiku')
+  it('should use the standard abstract model tier', () => {
+    expect(ECHO_AGENT.model).toBe('standard')
   })
 
   it('should have a system prompt with wanman CLI instructions', () => {
@@ -32,8 +32,8 @@ describe('PING_AGENT', () => {
     expect(PING_AGENT.lifecycle).toBe('on-demand')
   })
 
-  it('should use haiku model', () => {
-    expect(PING_AGENT.model).toBe('haiku')
+  it('should use the standard abstract model tier', () => {
+    expect(PING_AGENT.model).toBe('standard')
   })
 
   it('should have a system prompt mentioning pong', () => {

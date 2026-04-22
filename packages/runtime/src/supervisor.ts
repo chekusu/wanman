@@ -26,7 +26,6 @@ import type {
   ContextGetParams,
   ContextSetParams,
   EventPushParams,
-  AuthProviderName,
   TaskCreateParams,
   TaskListParams,
   TaskGetParams,
@@ -65,7 +64,7 @@ import type {
 } from './agent-process.js';
 import { TokenTracker } from './token-tracker.js';
 import { SkillManager } from './skill-manager.js';
-import { AuthManager } from './auth-manager.js';
+import { AuthManager, isAuthProviderName } from './auth-manager.js';
 import { TaskPool, type Task } from './task-pool.js';
 import { InitiativeBoard } from './initiative-board.js';
 import { ChangeCapsulePool } from './change-capsule-pool.js';
@@ -917,9 +916,12 @@ ${activePaths}`;
       }
 
       case RPC_METHODS.AUTH_STATUS: {
-        const provider = params['provider'] as AuthProviderName | undefined;
+        const provider = params['provider'];
         if (!provider) {
           return createRpcError(req.id, RPC_ERRORS.INVALID_PARAMS, 'Missing "provider"');
+        }
+        if (!isAuthProviderName(provider)) {
+          return createRpcError(req.id, RPC_ERRORS.INVALID_PARAMS, `Unsupported auth provider: ${String(provider)}`);
         }
         return createRpcResponse(req.id, this.authManager.getLoginStatus(provider));
       }
@@ -942,9 +944,12 @@ ${activePaths}`;
       }
 
       case RPC_METHODS.AUTH_START: {
-        const provider = params['provider'] as AuthProviderName | undefined;
+        const provider = params['provider'];
         if (!provider) {
           return createRpcError(req.id, RPC_ERRORS.INVALID_PARAMS, 'Missing "provider"');
+        }
+        if (!isAuthProviderName(provider)) {
+          return createRpcError(req.id, RPC_ERRORS.INVALID_PARAMS, `Unsupported auth provider: ${String(provider)}`);
         }
         const info = await this.authManager.startLogin(provider);
         return createRpcResponse(req.id, info);

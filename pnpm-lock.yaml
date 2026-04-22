@@ -32,6 +32,9 @@ importers:
       '@wanman/host-sdk':
         specifier: workspace:*
         version: link:../host-sdk
+      '@wanman/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       chalk:
         specifier: ^5.6.2
         version: 5.6.2

@@ -18,38 +18,38 @@ const TAKEOVER_AGENT_TEMPLATES: AgentDefinition[] = [
   {
     name: 'ceo',
     lifecycle: '24/7',
-    model: 'claude-opus-4-6',
-    systemPrompt: 'You are the CEO agent. Decompose the mission into initiatives, tasks, and change capsules; keep the backlog flowing. Read CLAUDE.md for the per-project operating guide before acting.',
+    model: 'high',
+    systemPrompt: 'You are the CEO agent. Decompose the mission into initiatives, tasks, and change capsules; keep the backlog flowing. Read AGENT.md for the per-project operating guide before acting.',
   },
   {
     name: 'cto',
     lifecycle: 'on-demand',
-    model: 'claude-opus-4-6',
-    systemPrompt: 'You are the CTO agent. Gate code quality: review PRs, enforce the coverage gate, merge when ready. Read CLAUDE.md for the per-project operating guide before acting.',
+    model: 'high',
+    systemPrompt: 'You are the CTO agent. Gate code quality: review PRs, enforce the coverage gate, merge when ready. Read AGENT.md for the per-project operating guide before acting.',
   },
   {
     name: 'dev',
     lifecycle: 'on-demand',
-    model: 'claude-opus-4-6',
-    systemPrompt: 'You are a Dev agent. Implement assigned tasks end-to-end with tests and PRs, staying inside the capsule allowed paths. Read CLAUDE.md for the per-project operating guide before acting.',
+    model: 'high',
+    systemPrompt: 'You are a Dev agent. Implement assigned tasks end-to-end with tests and PRs, staying inside the capsule allowed paths. Read AGENT.md for the per-project operating guide before acting.',
   },
   {
     name: 'devops',
     lifecycle: '24/7',
-    model: 'claude-sonnet-4-6',
-    systemPrompt: 'You are the DevOps agent. Keep CI, build, and release pipelines healthy. Read CLAUDE.md for the per-project operating guide before acting.',
+    model: 'standard',
+    systemPrompt: 'You are the DevOps agent. Keep CI, build, and release pipelines healthy. Read AGENT.md for the per-project operating guide before acting.',
   },
   {
     name: 'feedback',
     lifecycle: '24/7',
-    model: 'claude-sonnet-4-6',
-    systemPrompt: 'You are the Feedback agent. Convert external signals (issues, TODOs, roadmap docs) into actionable tasks. Read CLAUDE.md for the per-project operating guide before acting.',
+    model: 'standard',
+    systemPrompt: 'You are the Feedback agent. Convert external signals (issues, TODOs, roadmap docs) into actionable tasks. Read AGENT.md for the per-project operating guide before acting.',
   },
   {
     name: 'marketing',
     lifecycle: '24/7',
-    model: 'claude-sonnet-4-6',
-    systemPrompt: 'You are the Marketing agent. Maintain README/docs/external narrative in sync with implementation changes. Read CLAUDE.md for the per-project operating guide before acting.',
+    model: 'standard',
+    systemPrompt: 'You are the Marketing agent. Maintain README/docs/external narrative in sync with implementation changes. Read AGENT.md for the per-project operating guide before acting.',
   },
 ]
 
@@ -126,11 +126,6 @@ export interface WriteTakeoverOverlayOptions {
 }
 
 const BASE_AGENT_MAP = new Map(TAKEOVER_AGENT_TEMPLATES.map(agent => [agent.name, agent] satisfies [string, AgentDefinition]))
-
-const RUNTIME_MODELS: Record<AgentRuntime, { high: string; standard: string }> = {
-  claude: { high: 'claude-opus-4-6', standard: 'claude-sonnet-4-6' },
-  codex: { high: 'gpt-5.4', standard: 'gpt-5.4' },
-}
 
 export const SANDBOX_PROJECT_ROOT = '/workspace/project/repo'
 export const SANDBOX_WORKSPACE_ROOT = `${SANDBOX_PROJECT_ROOT}/.wanman/agents`
@@ -231,6 +226,7 @@ export function detectGitHubRemote(projectPath: string): string | undefined {
     const remote = execSync('git remote get-url origin', {
       cwd: projectPath,
       encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 5000,
     }).trim()
     if (remote.includes('github.com')) return remote
@@ -507,7 +503,6 @@ export function generateAgentConfig(
 ): GeneratedAgentConfig {
   const intent = buildProjectIntent(profile)
   const goal = goalOverride || inferGoal(profile, intent)
-  const models = RUNTIME_MODELS[runtime]
 
   const canOperateContinuously = profile.hasReadme || profile.hasDocs || intent.roadmapDocs.length > 0
   const hasExecutionSurface = profile.ci.length > 0 || (profile.packageScripts?.length ?? 0) > 0
@@ -517,7 +512,7 @@ export function generateAgentConfig(
       name: 'ceo',
       lifecycle: '24/7',
       runtime,
-      model: models.high,
+      model: 'high',
       systemPromptHint: `Project: ${intent.projectName}; Summary: ${intent.summary.slice(0, 120)}`,
       enabled: true,
       reason: 'Always enabled - responsible for long-term mission orchestration and backlog generation',
@@ -526,7 +521,7 @@ export function generateAgentConfig(
       name: 'cto',
       lifecycle: 'on-demand',
       runtime,
-      model: models.high,
+      model: 'high',
       systemPromptHint: `Tests: ${profile.testFrameworks.join(', ') || 'none'}; CI: ${profile.ci.join(', ') || 'none'}`,
       enabled: true,
       reason: 'Always enabled - responsible for PR review with coverage gate and merge decisions',
@@ -535,7 +530,7 @@ export function generateAgentConfig(
       name: 'dev',
       lifecycle: 'on-demand',
       runtime,
-      model: models.high,
+      model: 'high',
       systemPromptHint: `Code roots: ${(profile.codeRoots ?? []).join(', ') || 'repo root'}; Tests: ${profile.testFrameworks.join(', ') || 'none'}`,
       enabled: true,
       reason: 'Always enabled - responsible for actual code implementation and verification',
@@ -544,7 +539,7 @@ export function generateAgentConfig(
       name: 'devops',
       lifecycle: '24/7',
       runtime,
-      model: models.standard,
+      model: 'standard',
       systemPromptHint: `CI: ${profile.ci.join(', ') || 'none'}; scripts: ${(profile.packageScripts ?? []).join(', ') || 'none'}`,
       enabled: hasExecutionSurface,
       reason: hasExecutionSurface ? 'CI / build / test entry points detected - suitable for continuous pipeline guardianship' : 'No stable build/test/CI entry points detected',
@@ -553,7 +548,7 @@ export function generateAgentConfig(
       name: 'feedback',
       lifecycle: '24/7',
       runtime,
-      model: models.standard,
+      model: 'standard',
       systemPromptHint: `Issue tracker: ${profile.issueTracker}; roadmap docs: ${intent.roadmapDocs.length}`,
       enabled: canOperateContinuously,
       reason: canOperateContinuously ? 'Continuously mining backlog from issues, roadmap, TODOs, and docs' : 'Insufficient roadmap/docs/issue signals - not deployed standalone',
@@ -562,7 +557,7 @@ export function generateAgentConfig(
       name: 'marketing',
       lifecycle: '24/7',
       runtime,
-      model: models.standard,
+      model: 'standard',
       systemPromptHint: `Docs: ${profile.hasDocs ? 'yes' : 'no'}; README: ${profile.hasReadme ? 'yes' : 'no'}`,
       enabled: profile.hasReadme || profile.hasDocs,
       reason: (profile.hasReadme || profile.hasDocs) ? 'README/docs detected - continuous maintenance of external narrative required' : 'No README/docs detected',

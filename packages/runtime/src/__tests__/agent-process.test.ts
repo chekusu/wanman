@@ -24,6 +24,7 @@ let eventHandlers: Array<((event: Record<string, unknown>) => void) | undefined>
 let spawnCallCount: number
 
 const mockKill = vi.fn()
+const codexStartRunMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../claude-code.js', () => ({
   spawnClaudeCode: vi.fn(() => {
@@ -34,13 +35,39 @@ vi.mock('../claude-code.js', () => ({
     const handlers: { event?: (event: Record<string, unknown>) => void } = {}
     eventHandlers[idx] = (event) => handlers.event?.(event)
     return {
-      proc: { stdin: { end: vi.fn() } },
+      proc: { pid: 12345, stdin: { end: vi.fn() } },
       wait: vi.fn(() => waitDeferreds[idx]!.promise),
       kill: mockKill,
       sendMessage: vi.fn(),
       onEvent: vi.fn((handler) => { handlers.event = handler }),
       onResult: vi.fn(),
       onExit: vi.fn(),
+    }
+  }),
+}))
+
+vi.mock('../codex-adapter.js', () => ({
+  CodexAdapter: vi.fn().mockImplementation(function CodexAdapterMock() {
+    return {
+      runtime: 'codex',
+      startRun: vi.fn((opts) => {
+      codexStartRunMock(opts)
+      const idx = spawnCallCount++
+      if (!waitDeferreds[idx]) {
+        waitDeferreds[idx] = deferred<number>()
+      }
+      const handlers: { event?: (event: Record<string, unknown>) => void } = {}
+      eventHandlers[idx] = (event) => handlers.event?.(event)
+      return {
+        proc: { pid: 12345, stdin: { end: vi.fn() } },
+        wait: vi.fn(() => waitDeferreds[idx]!.promise),
+        kill: mockKill,
+        sendMessage: vi.fn(),
+        onEvent: vi.fn((handler) => { handlers.event = handler }),
+        onResult: vi.fn(),
+        onExit: vi.fn(),
+      }
+      }),
     }
   }),
 }))
@@ -76,6 +103,7 @@ describe('AgentProcess', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    codexStartRunMock.mockClear()
     waitDeferreds = []
     eventHandlers = []
     spawnCallCount = 0
@@ -376,6 +404,67 @@ describe('AgentProcess', () => {
         }),
       }))
     })
+
+    it('passes Codex reasoning effort and fast-mode flags to Codex runs', async () => {
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[0].resolve(0)
+
+      const agent = new AgentProcess(
+        makeDef({ runtime: 'codex', model: 'high' }),
+        relay,
+        '/tmp',
+        undefined,
+        {
+          WANMAN_CODEX_REASONING_EFFORT: 'xhigh',
+          WANMAN_CODEX_FAST: 'yes',
+        },
+      )
+
+      relay.send('alice', 'test-agent', 'message', 'msg1', 'normal')
+      await agent.trigger()
+
+      expect(codexStartRunMock).toHaveBeenCalledWith(expect.objectContaining({
+        runtime: 'codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+        fast: true,
+      }))
+    })
+
+    it('handles all runtime event log formats without interrupting the run', async () => {
+      relay.send('ceo', 'test-agent', 'message', 'do work', 'normal')
+
+      const agent = new AgentProcess(makeDef(), relay, '/tmp')
+      waitDeferreds[0] = deferred<number>()
+      const triggerPromise = agent.trigger()
+      await new Promise(r => setTimeout(r, 0))
+
+      eventHandlers[0]?.({ type: 'item.completed', item: { title: 'done' } })
+      eventHandlers[0]?.({ type: 'turn.failed', error: { message: 'bad turn' } })
+      eventHandlers[0]?.({ type: 'event', tool_name: 'Bash', tool_input: { command: 'pnpm test' } })
+      eventHandlers[0]?.({ type: 'event', tool_name: 'Read', tool_input: { file_path: 'README.md' } })
+      eventHandlers[0]?.({
+        type: 'event',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Write', input: { file_path: 'out.txt' } },
+            { type: 'text', text: 'summary text' },
+            { type: 'tool_result', is_error: false, content: 'ok' },
+          ],
+        },
+      })
+      eventHandlers[0]?.({
+        type: 'result',
+        cost_usd: 0.01,
+        duration_ms: 10,
+        is_error: false,
+        stop_reason: 'complete',
+      })
+
+      waitDeferreds[0].resolve(0)
+      await triggerPromise
+      expect(agent.state).toBe('idle')
+    })
   })
 
   describe('handleSteer', () => {
@@ -446,6 +535,42 @@ describe('AgentProcess', () => {
       agent.stop()
       agent.stop()
       expect(agent.state).toBe('stopped')
+    })
+  })
+
+  describe('pause/resume', () => {
+    it('sends SIGSTOP and SIGCONT to the active process', async () => {
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+      waitDeferreds[0] = deferred<number>()
+
+      const agent = new AgentProcess(makeDef(), relay, '/tmp')
+      relay.send('alice', 'test-agent', 'message', 'hello', 'normal')
+      const triggerPromise = agent.trigger()
+      await new Promise((r) => setTimeout(r, 10))
+
+      agent.pause()
+      expect(agent.state).toBe('paused')
+      expect(killSpy).toHaveBeenCalledWith(12345, 'SIGSTOP')
+
+      agent.resume()
+      expect(agent.state).toBe('running')
+      expect(killSpy).toHaveBeenCalledWith(12345, 'SIGCONT')
+
+      waitDeferreds[0].resolve(0)
+      await triggerPromise
+      killSpy.mockRestore()
+    })
+
+    it('ignores pause/resume when the agent is not in the matching state', () => {
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+      const agent = new AgentProcess(makeDef(), relay, '/tmp')
+
+      agent.pause()
+      agent.resume()
+
+      expect(agent.state).toBe('idle')
+      expect(killSpy).not.toHaveBeenCalled()
+      killSpy.mockRestore()
     })
   })
 

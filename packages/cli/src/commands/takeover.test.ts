@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -22,6 +22,7 @@ import {
   materializeTakeoverProject,
   parseLocalGitStatus,
   planLocalDynamicClone,
+  takeoverCommand,
   type ProjectProfile,
 } from './takeover.js'
 
@@ -499,19 +500,19 @@ describe('generateAgentConfig', () => {
     for (const agent of config.agents) {
       expect(agent.runtime).toBe('claude')
     }
-    expect(config.agents.find(a => a.name === 'ceo')!.model).toBe('claude-opus-4-6')
-    expect(config.agents.find(a => a.name === 'devops')!.model).toBe('claude-sonnet-4-6')
+    expect(config.agents.find(a => a.name === 'ceo')!.model).toBe('high')
+    expect(config.agents.find(a => a.name === 'devops')!.model).toBe('standard')
   })
 
-  it('should use codex models when runtime is codex', () => {
+  it('should keep abstract model tiers when runtime is codex', () => {
     const config = generateAgentConfig(fullProfile, undefined, 'codex')
     expect(config.runtime).toBe('codex')
     for (const agent of config.agents) {
       expect(agent.runtime).toBe('codex')
     }
-    expect(config.agents.find(a => a.name === 'ceo')!.model).toBe('gpt-5.4')
-    expect(config.agents.find(a => a.name === 'dev')!.model).toBe('gpt-5.4')
-    expect(config.agents.find(a => a.name === 'devops')!.model).toBe('gpt-5.4')
+    expect(config.agents.find(a => a.name === 'ceo')!.model).toBe('high')
+    expect(config.agents.find(a => a.name === 'dev')!.model).toBe('high')
+    expect(config.agents.find(a => a.name === 'devops')!.model).toBe('standard')
   })
 })
 
@@ -587,7 +588,7 @@ describe('materializeTakeoverProject', () => {
       expect(agent.runtime).toBe('codex')
     }
     const ceo = config.agents.find(a => a.name === 'ceo')!
-    expect(ceo.model).toBe('gpt-5.4')
+    expect(ceo.model).toBe('high')
   })
 
   it('should create local takeover assets with local paths', () => {
@@ -618,10 +619,14 @@ describe('materializeTakeoverProject', () => {
     expect(skill).toContain(join(tmpDir, '.wanman', 'worktree').replace(/\\/g, '/'))
     expect(skill).toContain('initiative list')
     expect(skill).toContain('capsule create')
+    expect(skill).toContain('wanman initiative list')
+    expect(skill).not.toContain('packages/cli/dist/index.js')
     expect(agentGuide).toContain(join(tmpDir, '.wanman', 'skills', 'takeover-context', 'SKILL.md').replace(/\\/g, '/'))
     expect(agentGuide).toContain('Create at least 3 tasks in the first CEO cycle')
     expect(agentGuide).toContain('visible backlog creation is mandatory')
     expect(agentGuide).toContain('capsule create')
+    expect(agentGuide).toContain('wanman initiative list')
+    expect(agentGuide).not.toContain('packages/cli/dist/index.js')
     expect(config.gitRoot).toBe(join(tmpDir, '.wanman', 'worktree'))
   })
 })
@@ -738,5 +743,53 @@ describe('planLocalDynamicClone', () => {
     }))
 
     expect(action).toBeNull()
+  })
+})
+
+describe('takeoverCommand', () => {
+  it('runs a local dry-run takeover and writes tier-based local overlay config', async () => {
+    execSync('git init', { cwd: tmpDir, stdio: 'ignore' })
+    execSync('git config user.email test@example.com', { cwd: tmpDir, stdio: 'ignore' })
+    execSync('git config user.name Test', { cwd: tmpDir, stdio: 'ignore' })
+    touch('README.md', '# Test App\n\nA small app.')
+    touch('package.json', JSON.stringify({
+      scripts: { test: 'vitest', build: 'tsc' },
+      dependencies: { react: '^18.0.0' },
+      devDependencies: { vitest: '^4.0.0', typescript: '^5.0.0' },
+    }))
+    touch('pnpm-lock.yaml', '')
+    execSync('git add README.md package.json pnpm-lock.yaml', { cwd: tmpDir, stdio: 'ignore' })
+    execSync('git commit -m init', { cwd: tmpDir, stdio: 'ignore' })
+    const logs: string[] = []
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((message = '') => {
+      logs.push(String(message))
+    })
+
+    try {
+      await takeoverCommand([
+        tmpDir,
+        '--runtime', 'codex',
+        '--goal', 'Custom OSS mission',
+        '--dry-run',
+        '--loops', '2',
+        '--no-brain',
+        '--codex-model', 'gpt-test',
+      ])
+    } finally {
+      logSpy.mockRestore()
+    }
+
+    const config = JSON.parse(readFileSync(join(tmpDir, '.wanman', 'agents.json'), 'utf-8')) as {
+      goal: string
+      gitRoot: string
+      agents: Array<{ runtime: string; model: string }>
+    }
+    expect(config.goal).toBe('Custom OSS mission')
+    expect(config.gitRoot).toBe(join(tmpDir, '.wanman', 'worktree'))
+    expect(new Set(config.agents.map(agent => agent.runtime))).toEqual(new Set(['codex']))
+    expect(config.agents.map(agent => agent.model)).toContain('high')
+    expect(config.agents.map(agent => agent.model)).toContain('standard')
+    expect(readFileSync(join(tmpDir, '.wanman', 'agents', 'ceo', 'AGENT.md'), 'utf-8')).toContain('wanman task list')
+    expect(logs.join('\n')).toContain('Dry run complete')
   })
 })

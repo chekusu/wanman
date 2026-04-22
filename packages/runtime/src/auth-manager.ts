@@ -10,6 +10,7 @@ import type { AuthProviderName, AuthProviderInfo, AuthStatus } from '@wanman/cor
 import { createLogger } from './logger.js';
 
 const log = createLogger('auth-manager');
+const AUTH_CHECK_TIMEOUT_MS = 1500;
 
 /** Active login session for a provider */
 interface LoginSession {
@@ -78,22 +79,18 @@ function checkCodexAuth(): boolean {
   return false;
 }
 
+export const SUPPORTED_AUTH_PROVIDERS = ['claude', 'codex', 'github'] as const satisfies readonly AuthProviderName[];
+
+export function isAuthProviderName(value: unknown): value is AuthProviderName {
+  return typeof value === 'string' && (SUPPORTED_AUTH_PROVIDERS as readonly string[]).includes(value);
+}
+
 const PROVIDER_CONFIGS: Record<AuthProviderName, ProviderConfig> = {
-  stripe: {
-    checkCmd: ['stripe', 'config', '--list'],
-    loginCmd: ['stripe', 'login'],
-    codeRegex: /pairing code(?:.*?): (\S+)/i,
-    urlRegex: /https:\/\/\S+/,
-  },
   github: {
     checkCmd: ['gh', 'auth', 'status'],
     loginCmd: ['gh', 'auth', 'login', '-h', 'github.com', '-p', 'https', '-w'],
     codeRegex: /one-time code(?:.*?): (\S+)/i,
     urlRegex: /https:\/\/\S+/,
-  },
-  cloudflare: {
-    checkCmd: ['echo'],  // Not used — env var check only
-    envVar: 'CLOUDFLARE_API_TOKEN',
   },
   claude: {
     checkCmd: ['claude', '--version'],
@@ -116,9 +113,8 @@ export class AuthManager {
   /** Get all providers and their current auth status */
   async getProviders(): Promise<AuthProviderInfo[]> {
     const results: AuthProviderInfo[] = [];
-    const providers: AuthProviderName[] = ['claude', 'codex', 'stripe', 'github', 'cloudflare'];
 
-    for (const name of providers) {
+    for (const name of SUPPORTED_AUTH_PROVIDERS) {
       // If there's an active login session, return that
       const session = this.sessions.get(name);
       if (session && session.status === 'pending') {
@@ -150,7 +146,7 @@ export class AuthManager {
       return config.customCheck();
     }
 
-    // Env-var-based check (cloudflare)
+    // Env-var-based check
     if (config.envVar) {
       return !!process.env[config.envVar];
     }
@@ -314,12 +310,30 @@ export class AuthManager {
   /** Spawn a command and wait for exit code */
   private spawnAndWait(cmd: string, args: string[], silent: boolean): Promise<number> {
     return new Promise((resolve, reject) => {
+      let settled = false;
       const child: ChildProcess = spawn(cmd, args, {
         stdio: silent ? 'ignore' : 'inherit',
         env: { ...process.env },
       });
-      child.on('close', (code: number | null) => resolve(code ?? 1));
-      child.on('error', reject);
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill();
+        resolve(1);
+      }, AUTH_CHECK_TIMEOUT_MS);
+      timeout.unref?.();
+      child.on('close', (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(code ?? 1);
+      });
+      child.on('error', (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(error);
+      });
     });
   }
 }

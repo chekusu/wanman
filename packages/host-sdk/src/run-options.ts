@@ -10,7 +10,7 @@ export interface RunOptions {
   projectDir?: string
   workerUrl?: string
   workerModel?: string
-  workerKey: string
+  workerKey?: string
   noBrain: boolean
   keep: boolean
   output: string

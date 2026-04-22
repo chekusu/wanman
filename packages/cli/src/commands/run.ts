@@ -79,7 +79,7 @@ Usage:
   wanman run <goal> [options]
 
 If the current directory contains agents.json, it will be used as the
-project directory. Agent skills are loaded from agents/{name}/CLAUDE.md
+project directory. Agent skills are loaded from agents/{name}/AGENT.md
 and shared skills from skills/{name}/SKILL.md.
 
 The supervisor and agents run directly on the host machine — no sandbox,
@@ -105,7 +105,7 @@ Options:
 
 Project directory structure:
   agents.json                Agent role definitions
-  agents/{name}/CLAUDE.md    Per-agent skill files
+  agents/{name}/AGENT.md     Per-agent skill files
   skills/{name}/SKILL.md     Shared skills (optional)
   products.json              Product catalog (optional)
 

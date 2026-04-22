@@ -12,7 +12,7 @@ export interface WanmanHostSdkBindings {
 
 export interface WanmanHostSdkAdapters<
   TProjectRunSpec,
-  TPreparedTakeoverLaunch,
+  TPreparedTakeoverPlan,
   TConcreteTakeoverOptions extends object,
 > {
   runGoal(
@@ -21,9 +21,9 @@ export interface WanmanHostSdkAdapters<
     spec: TProjectRunSpec,
     bindings: WanmanHostSdkBindings,
   ): Promise<void>
-  prepareTakeoverLaunch(options: TConcreteTakeoverOptions): TPreparedTakeoverLaunch
-  executePreparedTakeoverLaunch(
-    launch: TPreparedTakeoverLaunch,
+  prepareTakeoverPlan(options: TConcreteTakeoverOptions): TPreparedTakeoverPlan
+  executePreparedTakeoverPlan(
+    plan: TPreparedTakeoverPlan,
     options: RunOptions,
     bindings: WanmanHostSdkBindings,
   ): Promise<void>
@@ -48,14 +48,14 @@ function normalizeRunOptions(
 
 export function createWanmanHostSdk<
   TProjectRunSpec = unknown,
-  TPreparedTakeoverLaunch = unknown,
+  TPreparedTakeoverPlan = unknown,
   TConcreteTakeoverOptions extends object = WanmanHostTakeoverOptions,
 >(
   config: WanmanHostSdkConfig = {},
-  adapters: WanmanHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverLaunch, TConcreteTakeoverOptions>,
+  adapters: WanmanHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>,
 ): WanmanHostSdk<
   TProjectRunSpec,
-  TPreparedTakeoverLaunch,
+  TPreparedTakeoverPlan,
   TConcreteTakeoverOptions | WanmanHostTakeoverOptions
 > {
   const bindings: WanmanHostSdkBindings = {
@@ -68,35 +68,35 @@ export function createWanmanHostSdk<
     },
 
     prepareTakeover(options) {
-      return adapters.prepareTakeoverLaunch(adapters.normalizeTakeoverOptions(options))
+      return adapters.prepareTakeoverPlan(adapters.normalizeTakeoverOptions(options))
     },
 
-    async executePreparedTakeover(launch, options) {
-      await adapters.executePreparedTakeoverLaunch(
-        launch,
+    async executePreparedTakeover(plan, options) {
+      await adapters.executePreparedTakeoverPlan(
+        plan,
         normalizeRunOptions(options, createTakeoverRunOptions),
         bindings,
       )
     },
 
     async takeover(options, runOptions) {
-      const launch = this.prepareTakeover(options)
-      await this.executePreparedTakeover(launch, runOptions)
+      const plan = this.prepareTakeover(options)
+      await this.executePreparedTakeover(plan, runOptions)
     },
   }
 }
 
 export function createEnvBackedWanmanHostSdk<
   TProjectRunSpec = unknown,
-  TPreparedTakeoverLaunch = unknown,
+  TPreparedTakeoverPlan = unknown,
   TConcreteTakeoverOptions extends object = WanmanHostTakeoverOptions,
 >(
   env: NodeJS.ProcessEnv = process.env,
   config: Omit<WanmanHostSdkConfig, 'env'> = {},
-  adapters: WanmanHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverLaunch, TConcreteTakeoverOptions>,
+  adapters: WanmanHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>,
 ): WanmanHostSdk<
   TProjectRunSpec,
-  TPreparedTakeoverLaunch,
+  TPreparedTakeoverPlan,
   TConcreteTakeoverOptions | WanmanHostTakeoverOptions
 > {
   return createWanmanHostSdk(

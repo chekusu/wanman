@@ -19,6 +19,10 @@ export interface LocalSupervisorOptions {
   runtime?: AgentRuntime
   codexModel?: string
   codexReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+  /** @internal test/embedded override; defaults to the built runtime entrypoint. */
+  runtimeEntrypoint?: string
+  /** @internal test/embedded override; defaults to the current CLI entrypoint. */
+  cliHostEntrypoint?: string
 }
 
 export interface LogChunk {
@@ -38,7 +42,8 @@ export interface LocalSupervisorHandle {
   waitForExit(): Promise<void>
 }
 
-function createLocalLogBuffer(maxLines = 200): {
+/** @internal exported for testing */
+export function createLocalLogBuffer(maxLines = 200): {
   readSince: (cursor: number) => { lines: string[]; cursor: number }
   pushChunk: (chunk: Buffer | string) => void
 } {
@@ -92,17 +97,18 @@ async function pickAvailablePort(): Promise<number> {
   })
 }
 
-function syncHomeEntry(source: string, target: string): void {
+/** @internal exported for testing */
+export function syncHomeEntry(source: string, target: string): void {
   if (!fs.existsSync(source)) return
   fs.rmSync(target, { recursive: true, force: true })
   const stat = fs.statSync(source)
   fs.symlinkSync(source, target, stat.isDirectory() ? 'dir' : 'file')
 }
 
-function resolveRuntimeEntrypoint(): string {
+export function resolveRuntimeEntrypoint(moduleDir: string = MODULE_DIR): string {
   const candidates = [
-    path.resolve(MODULE_DIR, '../../runtime/dist/entrypoint.js'),
-    path.resolve(MODULE_DIR, '../runtime/dist/entrypoint.js'),
+    path.resolve(moduleDir, '../../runtime/dist/entrypoint.js'),
+    path.resolve(moduleDir, '../runtime/dist/entrypoint.js'),
     '/opt/wanman/runtime/entrypoint.js',
   ]
   const entrypoint = candidates.find(candidate => fs.existsSync(candidate))
@@ -112,7 +118,25 @@ function resolveRuntimeEntrypoint(): string {
   return entrypoint
 }
 
-function installSharedSkills(sharedSkillsDir: string, agentHome: string): void {
+export function resolveCliEntrypoint(
+  moduleDir: string = MODULE_DIR,
+  argv: string[] = process.argv,
+): string {
+  const argvEntry = argv[1]
+  const candidates = [
+    path.resolve(moduleDir, 'index.js'),
+    path.resolve(moduleDir, '../dist/index.js'),
+    ...(argvEntry ? [path.resolve(argvEntry)] : []),
+  ]
+  const entrypoint = candidates.find(candidate => fs.existsSync(candidate))
+  if (!entrypoint) {
+    throw new Error('cannot find wanman CLI entrypoint. Run `pnpm -F @wanman/cli build` first.')
+  }
+  return entrypoint
+}
+
+/** @internal exported for testing */
+export function installSharedSkills(sharedSkillsDir: string, agentHome: string): void {
   for (const target of [`${agentHome}/.claude/skills`, `${agentHome}/.codex/skills`]) {
     for (const skillDir of fs.readdirSync(sharedSkillsDir)) {
       const src = path.join(sharedSkillsDir, skillDir)
@@ -126,22 +150,24 @@ function installSharedSkills(sharedSkillsDir: string, agentHome: string): void {
   }
 }
 
-function createHomeLayout(homeRoot: string): { agentHome: string; binDir: string } {
-  const home = process.env['HOME'] || '/root'
+/** @internal exported for testing */
+export function createHomeLayout(
+  homeRoot: string,
+  options: { home?: string; cliHostEntrypoint?: string } = {},
+): { agentHome: string; binDir: string } {
+  const home = options.home ?? process.env['HOME'] ?? '/root'
   const binDir = path.join(homeRoot, 'bin')
   const agentHome = path.join(homeRoot, 'home')
   fs.mkdirSync(binDir, { recursive: true })
   fs.mkdirSync(agentHome, { recursive: true })
 
-  const cliHostEntrypoint = path.resolve(MODULE_DIR, '../dist/wanman.js')
-  if (fs.existsSync(cliHostEntrypoint)) {
-    const wanmanWrapper = path.join(binDir, 'wanman')
-    fs.writeFileSync(
-      wanmanWrapper,
-      `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(cliHostEntrypoint)} "$@"\n`,
-    )
-    fs.chmodSync(wanmanWrapper, 0o755)
-  }
+  const cliHostEntrypoint = options.cliHostEntrypoint ?? resolveCliEntrypoint()
+  const wanmanWrapper = path.join(binDir, 'wanman')
+  fs.writeFileSync(
+    wanmanWrapper,
+    `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(cliHostEntrypoint)} "$@"\n`,
+  )
+  fs.chmodSync(wanmanWrapper, 0o755)
 
   const pnpmWrapper = path.join(binDir, 'pnpm')
   fs.writeFileSync(pnpmWrapper, '#!/usr/bin/env bash\nexec corepack pnpm "$@"\n')
@@ -155,7 +181,8 @@ function createHomeLayout(homeRoot: string): { agentHome: string; binDir: string
   return { agentHome, binDir }
 }
 
-function buildLocalSupervisorEnv(
+/** @internal exported for testing */
+export function buildLocalSupervisorEnv(
   baseEnv: NodeJS.ProcessEnv,
   opts: LocalSupervisorOptions,
   agentHome: string,
@@ -192,8 +219,10 @@ export async function startLocalSupervisor(opts: LocalSupervisorOptions): Promis
   config.port = port
   fs.writeFileSync(opts.configPath, JSON.stringify(config, null, 2))
 
-  const entrypoint = resolveRuntimeEntrypoint()
-  const { agentHome, binDir } = createHomeLayout(opts.homeRoot)
+  const entrypoint = opts.runtimeEntrypoint ?? resolveRuntimeEntrypoint()
+  const { agentHome, binDir } = createHomeLayout(opts.homeRoot, {
+    ...(opts.cliHostEntrypoint ? { cliHostEntrypoint: opts.cliHostEntrypoint } : {}),
+  })
   installSharedSkills(opts.sharedSkillsDir, agentHome)
 
   const logBuffer = createLocalLogBuffer()

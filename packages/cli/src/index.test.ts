@@ -10,19 +10,34 @@ vi.mock('./commands/recv.js', () => ({ recvCommand: vi.fn() }));
 vi.mock('./commands/agents.js', () => ({ agentsCommand: vi.fn() }));
 vi.mock('./commands/context.js', () => ({ contextCommand: vi.fn() }));
 vi.mock('./commands/escalate.js', () => ({ escalateCommand: vi.fn() }));
+vi.mock('./commands/task.js', () => ({ taskCommand: vi.fn() }));
+vi.mock('./commands/initiative.js', () => ({ initiativeCommand: vi.fn() }));
+vi.mock('./commands/capsule.js', () => ({ capsuleCommand: vi.fn() }));
+vi.mock('./commands/artifact.js', () => ({ artifactCommand: vi.fn() }));
+vi.mock('./commands/hypothesis.js', () => ({ hypothesisCommand: vi.fn() }));
 
-import { run, HELP } from './index.js';
+import { run, HELP, isDirectCliExecution } from './index.js';
 import { sendCommand } from './commands/send.js';
 import { recvCommand } from './commands/recv.js';
 import { agentsCommand } from './commands/agents.js';
 import { contextCommand } from './commands/context.js';
 import { escalateCommand } from './commands/escalate.js';
+import { taskCommand } from './commands/task.js';
+import { initiativeCommand } from './commands/initiative.js';
+import { capsuleCommand } from './commands/capsule.js';
+import { artifactCommand } from './commands/artifact.js';
+import { hypothesisCommand } from './commands/hypothesis.js';
 
 const mockSend = vi.mocked(sendCommand);
 const mockRecv = vi.mocked(recvCommand);
 const mockAgents = vi.mocked(agentsCommand);
 const mockContext = vi.mocked(contextCommand);
 const mockEscalate = vi.mocked(escalateCommand);
+const mockTask = vi.mocked(taskCommand);
+const mockInitiative = vi.mocked(initiativeCommand);
+const mockCapsule = vi.mocked(capsuleCommand);
+const mockArtifact = vi.mocked(artifactCommand);
+const mockHypothesis = vi.mocked(hypothesisCommand);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -57,6 +72,31 @@ describe('command routing', () => {
   it('routes "escalate" to escalateCommand', async () => {
     await run('escalate', ['urgent', 'problem']);
     expect(mockEscalate).toHaveBeenCalledWith(['urgent', 'problem']);
+  });
+
+  it('routes "task" to taskCommand', async () => {
+    await run('task', ['list', '--status', 'open']);
+    expect(mockTask).toHaveBeenCalledWith(['list', '--status', 'open']);
+  });
+
+  it('routes "initiative" to initiativeCommand', async () => {
+    await run('initiative', ['get', 'init-1']);
+    expect(mockInitiative).toHaveBeenCalledWith(['get', 'init-1']);
+  });
+
+  it('routes "capsule" to capsuleCommand', async () => {
+    await run('capsule', ['mine', '--agent', 'dev']);
+    expect(mockCapsule).toHaveBeenCalledWith(['mine', '--agent', 'dev']);
+  });
+
+  it('routes "artifact" to artifactCommand', async () => {
+    await run('artifact', ['list', '--agent', 'cto']);
+    expect(mockArtifact).toHaveBeenCalledWith(['list', '--agent', 'cto']);
+  });
+
+  it('routes "hypothesis" to hypothesisCommand', async () => {
+    await run('hypothesis', ['update', 'hyp-1', '--status', 'accepted']);
+    expect(mockHypothesis).toHaveBeenCalledWith(['update', 'hyp-1', '--status', 'accepted']);
   });
 });
 
@@ -113,6 +153,54 @@ describe('run command routing', () => {
     expect(console.error).toHaveBeenCalledWith('boom')
 
     vi.doUnmock('./commands/run.js')
+  })
+})
+
+describe('dynamic command routing', () => {
+  it('routes "watch" to watchCommand via dynamic import', async () => {
+    const mockWatchCommand = vi.fn()
+    vi.doMock('./commands/watch.js', () => ({ watchCommand: mockWatchCommand }))
+
+    await run('watch', ['--once'])
+    expect(mockWatchCommand).toHaveBeenCalledWith(['--once'])
+
+    vi.doUnmock('./commands/watch.js')
+  })
+
+  it('routes "skill:check" to skillCheckCommand via dynamic import', async () => {
+    const mockSkillCheckCommand = vi.fn()
+    vi.doMock('./commands/skill-check.js', () => ({ skillCheckCommand: mockSkillCheckCommand }))
+
+    await run('skill:check', ['skills/foo/SKILL.md'])
+    expect(mockSkillCheckCommand).toHaveBeenCalledWith(['skills/foo/SKILL.md'])
+
+    vi.doUnmock('./commands/skill-check.js')
+  })
+
+  it('routes "takeover" to takeoverCommand via dynamic import', async () => {
+    const mockTakeoverCommand = vi.fn()
+    vi.doMock('./commands/takeover.js', () => ({ takeoverCommand: mockTakeoverCommand }))
+
+    await run('takeover', ['/tmp/project', '--local'])
+    expect(mockTakeoverCommand).toHaveBeenCalledWith(['/tmp/project', '--local'])
+
+    vi.doUnmock('./commands/takeover.js')
+  })
+})
+
+describe('direct execution detection', () => {
+  it('returns true when argv entry matches import meta URL', () => {
+    const entry = '/tmp/wanman-entry.js'
+
+    expect(isDirectCliExecution(new URL(`file://${entry}`).href, ['node', entry])).toBe(true)
+  })
+
+  it('returns false without an argv entry', () => {
+    expect(isDirectCliExecution('file:///tmp/wanman-entry.js', ['node'])).toBe(false)
+  })
+
+  it('returns false for invalid import URLs', () => {
+    expect(isDirectCliExecution('not-a-url', ['node', '/tmp/wanman-entry.js'])).toBe(false)
   })
 })
 

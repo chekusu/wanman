@@ -55,14 +55,17 @@ const productsJson = readAsset('apps/container/products.json')
 
 // Agent configs
 const agentConfigs = {}
-for (const f of fs.readdirSync(path.join(projectRoot, 'apps/container'))) {
-  if (f.startsWith('agents') && f.endsWith('.json')) {
-    agentConfigs[f] = fs.readFileSync(path.join(projectRoot, 'apps/container', f), 'utf-8')
+const containerDir = path.join(projectRoot, 'apps/container')
+if (fs.existsSync(containerDir)) {
+  for (const f of fs.readdirSync(containerDir)) {
+    if (f.startsWith('agents') && f.endsWith('.json')) {
+      agentConfigs[f] = fs.readFileSync(path.join(containerDir, f), 'utf-8')
+    }
   }
 }
 
-// Agent skills (CLAUDE.md per agent)
-const agentSkills = collectDir('packages/core/agents', 'CLAUDE.md')
+// Agent guides (AGENT.md per agent)
+const agentSkills = collectDir('packages/core/agents', 'AGENT.md')
 
 // Shared skills (SKILL.md per skill)
 const sharedSkills = collectDir('packages/core/skills', 'SKILL.md')

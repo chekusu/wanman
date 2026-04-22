@@ -759,6 +759,259 @@ describe('Supervisor', () => {
     })
   })
 
+  describe('brain-backed RPC success paths', () => {
+    it('stores, lists, and fetches artifacts through the brain manager', async () => {
+      const executeSQL = vi.fn().mockResolvedValue([{ id: 42, agent: 'ceo', kind: 'note' }])
+      ;(supervisor as unknown as { brainManager: unknown }).brainManager = {
+        isInitialized: true,
+        executeSQL,
+      }
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(null, { status: 200 }),
+      )
+      const previousEnv = {
+        WANMAN_SYNC_URL: process.env['WANMAN_SYNC_URL'],
+        WANMAN_SYNC_SECRET: process.env['WANMAN_SYNC_SECRET'],
+        WANMAN_STORY_ID: process.env['WANMAN_STORY_ID'],
+      }
+      process.env['WANMAN_SYNC_URL'] = 'https://api.example.com/api/sync'
+      process.env['WANMAN_SYNC_SECRET'] = 'sync-secret'
+      process.env['WANMAN_STORY_ID'] = 'story-1'
+
+      try {
+        supervisor.initEventBus('run-1')
+        const put = await supervisor.handleRpcAsync(rpc(RPC_METHODS.ARTIFACT_PUT, {
+          kind: 'note',
+          agent: 'ceo',
+          source: 'test',
+          confidence: 0.9,
+          path: 'notes/one.md',
+          content: 'hello',
+          metadata: { topic: 'coverage' },
+        }))
+        expect(put.error).toBeUndefined()
+        expect(executeSQL.mock.calls.at(-1)?.[0]).toContain('INSERT INTO artifacts')
+        expect(fetchSpy).toHaveBeenCalledWith(
+          'https://api.example.com/api/sync/artifact',
+          expect.objectContaining({ method: 'POST' }),
+        )
+
+        const list = await supervisor.handleRpcAsync(rpc(RPC_METHODS.ARTIFACT_LIST, {
+          agent: 'ceo',
+          kind: 'note',
+          verified: true,
+        }))
+        expect(list.error).toBeUndefined()
+        expect(executeSQL.mock.calls.at(-1)?.[0]).toContain("metadata->>'verified' = 'true'")
+
+        const get = await supervisor.handleRpcAsync(rpc(RPC_METHODS.ARTIFACT_GET, { id: 42 }))
+        expect(get.error).toBeUndefined()
+        expect(executeSQL.mock.calls.at(-1)?.[0]).toContain('WHERE id = 42')
+      } finally {
+        if (previousEnv.WANMAN_SYNC_URL === undefined) delete process.env['WANMAN_SYNC_URL']
+        else process.env['WANMAN_SYNC_URL'] = previousEnv.WANMAN_SYNC_URL
+        if (previousEnv.WANMAN_SYNC_SECRET === undefined) delete process.env['WANMAN_SYNC_SECRET']
+        else process.env['WANMAN_SYNC_SECRET'] = previousEnv.WANMAN_SYNC_SECRET
+        if (previousEnv.WANMAN_STORY_ID === undefined) delete process.env['WANMAN_STORY_ID']
+        else process.env['WANMAN_STORY_ID'] = previousEnv.WANMAN_STORY_ID
+        fetchSpy.mockRestore()
+      }
+    })
+
+    it('creates, lists, and updates hypotheses through the brain manager', async () => {
+      const executeSQL = vi.fn().mockResolvedValue([{ id: 7, status: 'validated' }])
+      ;(supervisor as unknown as { brainManager: unknown }).brainManager = {
+        isInitialized: true,
+        executeSQL,
+      }
+
+      const created = await supervisor.handleRpcAsync(rpc(RPC_METHODS.HYPOTHESIS_CREATE, {
+        title: 'Users need local mode',
+        agent: 'ceo',
+        rationale: 'OSS installs are simpler',
+        expectedValue: 'activation',
+        estimatedCost: 'small',
+        parentId: 1,
+      }))
+      expect(created.error).toBeUndefined()
+      expect(executeSQL.mock.calls.at(-1)?.[0]).toContain('INSERT INTO hypotheses')
+
+      const tree = await supervisor.handleRpcAsync(rpc(RPC_METHODS.HYPOTHESIS_LIST, {
+        treeRoot: 7,
+      }))
+      expect(tree.error).toBeUndefined()
+      expect(executeSQL.mock.calls.at(-1)?.[0]).toContain('WITH RECURSIVE tree')
+
+      const filtered = await supervisor.handleRpcAsync(rpc(RPC_METHODS.HYPOTHESIS_LIST, {
+        status: 'active',
+      }))
+      expect(filtered.error).toBeUndefined()
+      expect(executeSQL.mock.calls.at(-1)?.[0]).toContain("status = 'active'")
+
+      const updated = await supervisor.handleRpcAsync(rpc(RPC_METHODS.HYPOTHESIS_UPDATE, {
+        id: 7,
+        status: 'validated',
+        outcome: 'confirmed',
+        evidence: [42, 43],
+      }))
+      expect(updated.error).toBeUndefined()
+      const updateSql = String(executeSQL.mock.calls.at(-1)?.[0])
+      expect(updateSql).toContain('evidence_artifact_ids = ARRAY[42,43]')
+      expect(updateSql).toContain('resolved_at = now()')
+    })
+  })
+
+  describe('skill RPC manager guards', () => {
+    it('returns explicit errors when skill manager RPCs are unavailable', async () => {
+      ;(supervisor as unknown as { _skillManager: unknown })._skillManager = null
+      for (const [method, params] of [
+        [RPC_METHODS.SKILL_GET, { agent: 'ceo' }],
+        [RPC_METHODS.SKILL_UPDATE, { agent: 'ceo', content: '# Skill' }],
+        [RPC_METHODS.SKILL_ROLLBACK, { agent: 'ceo' }],
+        [RPC_METHODS.SKILL_METRICS, {}],
+      ] as const) {
+        const res = await supervisor.handleRpcAsync(rpc(method, params))
+        expect(res.error?.code).toBe(RPC_ERRORS.INTERNAL_ERROR)
+        expect(res.error?.message).toMatch(/Skill manager not initialized/)
+      }
+    })
+  })
+
+  describe('internal scheduling helpers', () => {
+    it('detects blocked work and wakes on-demand agents when dependencies complete', async () => {
+      const root = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+        title: 'Root task',
+        description: 'unblocks follow-up',
+        assignee: 'echo',
+      }))
+      const rootTask = root.result as { id: string }
+      const blocked = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+        title: 'Blocked task',
+        description: 'waits on root',
+        assignee: 'ping',
+        dependsOn: [rootTask.id],
+      }))
+      expect(blocked.error).toBeUndefined()
+
+      const pingAgent = {
+        definition: { lifecycle: 'on-demand' },
+        state: 'idle',
+        trigger: vi.fn(),
+      }
+      ;(supervisor as unknown as { agents: Map<string, unknown> }).agents.set('ping', pingAgent)
+
+      const helpers = supervisor as unknown as {
+        hasBlockedTasksOnly(agentName: string): boolean
+        hasAutonomousWork(agentName: string): boolean
+        wakeUnblockedAgents(completedTaskId: string): void
+        taskPool: { listSync: () => unknown[] }
+      }
+      expect(helpers.hasBlockedTasksOnly('ping')).toBe(true)
+      expect(helpers.hasAutonomousWork('ceo')).toBe(true)
+      expect(helpers.hasAutonomousWork('ping')).toBe(false)
+
+      await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_UPDATE, {
+        id: rootTask.id,
+        status: 'done',
+      }))
+      helpers.wakeUnblockedAgents(rootTask.id)
+
+      expect(helpers.hasBlockedTasksOnly('ping')).toBe(false)
+      expect(helpers.hasAutonomousWork('ping')).toBe(true)
+      expect(pingAgent.trigger).toHaveBeenCalled()
+
+      const originalListSync = helpers.taskPool.listSync
+      helpers.taskPool.listSync = () => { throw new Error('db unavailable') }
+      expect(helpers.hasBlockedTasksOnly('ping')).toBe(false)
+      expect(helpers.hasAutonomousWork('ping')).toBe(true)
+      helpers.taskPool.listSync = originalListSync
+    })
+
+    it('builds preamble/env providers from active skill snapshots and records run feedback', async () => {
+      const taskRes = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+        title: 'Use a skill',
+        description: 'exercise snapshot attribution',
+        assignee: 'ping',
+        executionProfile: 'research.deep_dive',
+      }))
+      const task = taskRes.result as { id: string }
+      const snapshot = {
+        id: 'snapshot-1',
+        runId: 'run-1',
+        loopNumber: 0,
+        taskId: task.id,
+        agent: 'ping',
+        executionProfile: 'research.deep_dive',
+        activationScope: 'task',
+        activatedBy: 'system',
+        materializedPath: '/tmp/skills/snapshot-1',
+        resolvedSkills: [{ path: '/tmp/skills/research/SKILL.md' }],
+        bundleId: 'bundle-1',
+        bundleVersion: 3,
+        createdAt: Date.now(),
+      }
+      const executeSQL = vi.fn().mockResolvedValue([])
+      Object.assign(supervisor as unknown as {
+        _sharedSkillManager: unknown
+        _agentHomeManager: unknown
+        brainManager: unknown
+      }, {
+        _sharedSkillManager: {
+          createActivationSnapshot: vi.fn().mockResolvedValue(snapshot),
+        },
+        _agentHomeManager: {
+          prepareAgentHome: vi.fn().mockReturnValue('/tmp/agent-home'),
+          cleanupHomes: vi.fn(),
+        },
+        brainManager: {
+          isInitialized: true,
+          executeSQL,
+        },
+      })
+
+      const helpers = supervisor as unknown as {
+        buildPreambleProvider(): (agentName: string) => Promise<string | undefined>
+        buildEnvProvider(): (agentName: string) => Promise<Record<string, string>>
+        buildRunCompleteCallback(): (info: {
+          agentName: string
+          exitCode: number
+          durationMs: number
+          errored: boolean
+          steerCount: number
+          inputTokens: number
+          outputTokens: number
+          totalTokens: number
+        }) => void
+      }
+
+      const preamble = await helpers.buildPreambleProvider()('ping')
+      expect(preamble).toContain('Active Skill Snapshot')
+      expect(preamble).toContain('/tmp/skills/research/SKILL.md')
+
+      const env = await helpers.buildEnvProvider()('ping')
+      expect(env).toEqual({
+        HOME: '/tmp/agent-home',
+        WANMAN_ACTIVE_SKILLS_DIR: '/tmp/skills/snapshot-1',
+        WANMAN_ACTIVE_SKILL_SNAPSHOT_ID: 'snapshot-1',
+      })
+
+      supervisor.initEventBus('run-1')
+      helpers.buildRunCompleteCallback()({
+        agentName: 'ping',
+        exitCode: 0,
+        durationMs: 250,
+        errored: false,
+        steerCount: 2,
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      })
+
+      expect(executeSQL).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO run_feedback'))
+      expect(executeSQL.mock.calls.at(-1)?.[0]).toContain('snapshot-1')
+    })
+  })
+
   describe('shutdown', () => {
     it('should shutdown gracefully', async () => {
       await expect(supervisor.shutdown()).resolves.toBeUndefined()

@@ -128,6 +128,24 @@ describe('parseOptions', () => {
     const { opts } = parseOptions(['my goal', '--config', './my-agents.json'])
     expect(opts.configPath).toBe('./my-agents.json')
   })
+
+  it('should parse worker overrides', () => {
+    const { opts } = parseOptions([
+      'my goal',
+      '--worker-url', 'http://127.0.0.1:1234',
+      '--worker-model', 'local-model',
+      '--worker-key', 'secret',
+    ])
+    expect(opts.workerUrl).toBe('http://127.0.0.1:1234')
+    expect(opts.workerModel).toBe('local-model')
+    expect(opts.workerKey).toBe('secret')
+  })
+
+  it('normalizes codex effort aliases and rejects invalid values', () => {
+    expect(parseOptions(['my goal', '--codex-effort', 'deep']).opts.codexReasoningEffort).toBe('high')
+    expect(parseOptions(['my goal', '--codex-speed', 'max']).opts.codexReasoningEffort).toBe('xhigh')
+    expect(() => parseOptions(['my goal', '--codex-effort', 'invalid'])).toThrow(/Invalid codex effort/)
+  })
 })
 
 describe('buildRunKickoffPayload', () => {

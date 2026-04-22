@@ -62,7 +62,8 @@ interface LocalPrNudgeState {
 
 type LocalMissionNudgeState = MissionNudgeState
 
-function warnLocalEnvironment(profile: ProjectProfile, worktreePath: string): void {
+/** @internal exported for testing */
+export function warnLocalEnvironment(profile: ProjectProfile, worktreePath: string): void {
   const warnings: string[] = []
 
   try {
@@ -209,7 +210,7 @@ function extractPorcelainPath(line: string): string | undefined {
     return renamed[1]?.split('\t')[0]?.trim() || undefined
   }
 
-  const unmerged = line.match(/^u [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ (.+)$/)
+  const unmerged = line.match(/^u [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+ (.+)$/)
   if (unmerged) return unmerged[1]?.trim() || undefined
 
   return undefined
@@ -234,7 +235,8 @@ async function readLocalGitState(worktreePath: string): Promise<LocalGitState> {
   }
 }
 
-function buildLocalDashboardState(
+/** @internal exported for testing */
+export function buildLocalDashboardState(
   goal: string,
   observedLoops: number,
   maxLoops: number,
@@ -258,7 +260,8 @@ function buildLocalDashboardState(
   }
 }
 
-function appendLogLines(buffer: string[], lines: string[], maxLines = 200): void {
+/** @internal exported for testing */
+export function appendLogLines(buffer: string[], lines: string[], maxLines = 200): void {
   for (const line of lines) {
     const trimmed = line.trim()
     if (!trimmed) continue
@@ -267,7 +270,8 @@ function appendLogLines(buffer: string[], lines: string[], maxLines = 200): void
   if (buffer.length > maxLines) buffer.splice(0, buffer.length - maxLines)
 }
 
-async function collectLocalObservationState(
+/** @internal exported for testing */
+export async function collectLocalObservationState(
   runtime: RuntimeClient,
   worktreePath: string,
   logLines: string[],
@@ -332,7 +336,8 @@ function isTakeoverFeatureBranch(branch?: string): boolean {
   return !!branch && /^(wanman|fix|feat|chore|docs)\//.test(branch)
 }
 
-function collectPrNudgeRecipients(state: LocalObservationState): string[] {
+/** @internal exported for testing */
+export function collectPrNudgeRecipients(state: LocalObservationState): string[] {
   const recipients = new Set<string>()
   for (const task of state.tasks) {
     if (!task.assignee) continue
@@ -345,7 +350,8 @@ function collectPrNudgeRecipients(state: LocalObservationState): string[] {
   return [...recipients]
 }
 
-function buildPrNudgeSignature(state: LocalObservationState): string {
+/** @internal exported for testing */
+export function buildPrNudgeSignature(state: LocalObservationState): string {
   return JSON.stringify({
     branch: state.activeBranch ?? null,
     branchAhead: state.branchAhead,
@@ -373,7 +379,8 @@ async function maybeNudgeLocalMissionControl(
   )
 }
 
-async function maybeNudgeLocalPrExecution(
+/** @internal exported for testing */
+export async function maybeNudgeLocalPrExecution(
   runtime: RuntimeClient,
   state: LocalObservationState,
   nudgeState: LocalPrNudgeState,
@@ -459,7 +466,7 @@ export function materializeLocalTakeoverProject(
   const localRuntimePaths: TakeoverRuntimePaths = {
     projectRoot: worktreePath,
     sharedSkillPath: path.join(wanmanDir, 'skills', 'takeover-context', 'SKILL.md'),
-    cliCommand: `node ${path.join(profile.path, 'packages/cli/dist/index.js')}`,
+    cliCommand: 'wanman',
     localMode: true,
   }
 

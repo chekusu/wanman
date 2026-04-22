@@ -28,6 +28,17 @@ export interface RunLocalSupervisorSessionParams {
   run(context: LocalSupervisorSessionContext): Promise<void>
 }
 
+async function waitForEarlyExit(supervisor: LocalSupervisorHandle): Promise<never> {
+  const code = await new Promise<number | null>((resolve, reject) => {
+    supervisor.child.once('error', reject)
+    supervisor.child.once('close', resolve)
+  })
+  const logs = await supervisor.readLogs(0).catch(() => ({ lines: [] as string[], cursor: 0 }))
+  const tail = logs.lines.slice(-20)
+  const details = tail.length > 0 ? `\n\nSupervisor logs:\n${tail.join('\n')}` : ''
+  throw new Error(`Supervisor exited before becoming healthy with code ${code ?? 'unknown'}.${details}`)
+}
+
 export async function runLocalSupervisorSession(params: RunLocalSupervisorSessionParams): Promise<void> {
   const supervisor = await startLocalSupervisor(params.supervisor)
   const detachSignalForwarding = supervisor.attachSignalForwarding()
@@ -81,7 +92,10 @@ export async function runLocalSupervisorSession(params: RunLocalSupervisorSessio
 
   try {
     await params.onStarted?.(context)
-    await context.runtime.waitForHealth()
+    await Promise.race([
+      context.runtime.waitForHealth(),
+      waitForEarlyExit(supervisor),
+    ])
     await params.onHealthy?.(context)
     await params.run(context)
   } catch (error) {

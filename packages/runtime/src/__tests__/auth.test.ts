@@ -71,19 +71,16 @@ describe('AuthManager', () => {
   })
 
   describe('getProviders', () => {
-    it('should return 5 providers', async () => {
+    it('should return local OSS providers', async () => {
       const mgr = new AuthManager()
-      // checkAuth will fail for stripe/github (not installed), cloudflare (no env)
       const providers = await mgr.getProviders()
-      expect(providers).toHaveLength(5)
-      expect(providers.map(p => p.name).sort()).toEqual(['claude', 'cloudflare', 'codex', 'github', 'stripe'])
+      expect(providers).toHaveLength(3)
+      expect(providers.map(p => p.name).sort()).toEqual(['claude', 'codex', 'github'])
     })
 
     it('should report unauthenticated for all providers in clean env', async () => {
       const mgr = new AuthManager()
       const providers = await mgr.getProviders()
-      // stripe & github CLIs likely not installed → unauthenticated
-      // cloudflare → no CLOUDFLARE_API_TOKEN → unauthenticated
       for (const p of providers) {
         expect(['authenticated', 'unauthenticated']).toContain(p.status)
       }
@@ -91,22 +88,6 @@ describe('AuthManager', () => {
   })
 
   describe('checkAuth', () => {
-    it('should detect cloudflare via env var', async () => {
-      const mgr = new AuthManager()
-      // No env var
-      expect(await mgr.checkAuth('cloudflare')).toBe(false)
-    })
-
-    it('should detect cloudflare when env var set', async () => {
-      process.env['CLOUDFLARE_API_TOKEN'] = 'test-token'
-      try {
-        const mgr = new AuthManager()
-        expect(await mgr.checkAuth('cloudflare')).toBe(true)
-      } finally {
-        delete process.env['CLOUDFLARE_API_TOKEN']
-      }
-    })
-
     it('should detect claude via ANTHROPIC_API_KEY', async () => {
       const mgr = new AuthManager()
       // No env var → unauthenticated
@@ -165,13 +146,6 @@ describe('AuthManager', () => {
   })
 
   describe('startLogin', () => {
-    it('should return error for cloudflare (no CLI login)', async () => {
-      const mgr = new AuthManager()
-      const result = await mgr.startLogin('cloudflare')
-      expect(result.status).toBe('error')
-      expect(result.error).toContain('does not support CLI login')
-    })
-
     it('should return pending session for claude if already in progress', async () => {
       const mgr = new AuthManager()
       const sessions = (mgr as unknown as { sessions: Map<string, unknown> }).sessions
@@ -190,16 +164,16 @@ describe('AuthManager', () => {
       const mgr = new AuthManager()
       // Manually set a pending session via private access
       const sessions = (mgr as unknown as { sessions: Map<string, unknown> }).sessions
-      sessions.set('stripe', {
-        provider: 'stripe',
+      sessions.set('github', {
+        provider: 'github',
         status: 'pending',
-        loginUrl: 'https://stripe.com/login/xxx',
+        loginUrl: 'https://github.com/login/device',
         loginCode: 'test-code',
       })
 
-      const result = await mgr.startLogin('stripe')
+      const result = await mgr.startLogin('github')
       expect(result.status).toBe('pending')
-      expect(result.loginUrl).toBe('https://stripe.com/login/xxx')
+      expect(result.loginUrl).toBe('https://github.com/login/device')
       expect(result.loginCode).toBe('test-code')
     })
   })
@@ -216,16 +190,16 @@ describe('AuthManager', () => {
       const mgr = new AuthManager()
       // Manually inject session state
       const sessions = (mgr as unknown as { sessions: Map<string, unknown> }).sessions
-      sessions.set('stripe', {
-        provider: 'stripe',
+      sessions.set('github', {
+        provider: 'github',
         status: 'authenticated',
-        loginUrl: 'https://stripe.com/login/xxx',
+        loginUrl: 'https://github.com/login/device',
         loginCode: 'test-code',
       })
 
-      const result = mgr.getLoginStatus('stripe')
+      const result = mgr.getLoginStatus('github')
       expect(result.status).toBe('authenticated')
-      expect(result.loginUrl).toBe('https://stripe.com/login/xxx')
+      expect(result.loginUrl).toBe('https://github.com/login/device')
     })
   })
 })
@@ -251,14 +225,14 @@ describe('Supervisor — auth.* RPC methods', () => {
 
   // ── auth.providers ──
 
-  it('auth.providers returns all 5 providers via handleRpcAsync', async () => {
+  it('auth.providers returns local OSS providers via handleRpcAsync', async () => {
     const res = await supervisor.handleRpcAsync(rpc(RPC_METHODS.AUTH_PROVIDERS, {}))
     expect(res.error).toBeUndefined()
     const { providers } = res.result as { providers: AuthProviderInfo[] }
-    expect(providers).toHaveLength(5)
+    expect(providers).toHaveLength(3)
 
     const names = providers.map(p => p.name).sort()
-    expect(names).toEqual(['claude', 'cloudflare', 'codex', 'github', 'stripe'])
+    expect(names).toEqual(['claude', 'codex', 'github'])
 
     // Each provider should have a status
     for (const p of providers) {
@@ -281,14 +255,16 @@ describe('Supervisor — auth.* RPC methods', () => {
     expect(res.error?.code).toBe(RPC_ERRORS.INVALID_PARAMS)
   })
 
+  it('auth.status returns INVALID_PARAMS for unsupported provider', () => {
+    const res = supervisor.handleRpc(rpc(RPC_METHODS.AUTH_STATUS, { provider: 'stripe' }))
+    expect(res.error?.code).toBe(RPC_ERRORS.INVALID_PARAMS)
+  })
+
   // ── auth.start ──
 
-  it('auth.start returns error for unsupported provider (cloudflare)', async () => {
+  it('auth.start returns INVALID_PARAMS for unsupported provider', async () => {
     const res = await supervisor.handleRpcAsync(rpc(RPC_METHODS.AUTH_START, { provider: 'cloudflare' }))
-    expect(res.error).toBeUndefined()
-    const info = res.result as AuthProviderInfo
-    expect(info.status).toBe('error')
-    expect(info.error).toContain('does not support CLI login')
+    expect(res.error?.code).toBe(RPC_ERRORS.INVALID_PARAMS)
   })
 
   it('auth.start returns INVALID_PARAMS when provider is missing', async () => {

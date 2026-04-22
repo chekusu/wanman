@@ -176,6 +176,35 @@ describe('CredentialManager', () => {
       expect(written.claudeAiOauth.expiresAt).toBe(vaultCreds.claudeAiOauth.expiresAt)
     })
 
+    it('falls back to env when the vault is unreadable', async () => {
+      const envCreds = makeCreds({ expiresAt: Date.now() + 4 * 3600 * 1000 })
+      fs.writeFileSync(TEST_VAULT_PATH, '{bad-json')
+
+      setEnv('ANTHROPIC_API_KEY', undefined)
+      setEnv('CLAUDE_CREDENTIALS', JSON.stringify(envCreds))
+      const cm = makeManager()
+      cm.detectAuthMode()
+      await cm.bootstrap()
+
+      const written = JSON.parse(fs.readFileSync(TEST_CREDS_FILE, 'utf-8'))
+      expect(written.claudeAiOauth.expiresAt).toBe(envCreds.claudeAiOauth.expiresAt)
+    })
+
+    it('does not write credentials when oauth env is missing or invalid', async () => {
+      setEnv('ANTHROPIC_API_KEY', undefined)
+      setEnv('CLAUDE_CREDENTIALS', undefined)
+      let cm = makeManager()
+      ;(cm as unknown as { authMode: AuthMode }).authMode = 'oauth'
+      await cm.bootstrap()
+      expect(fs.existsSync(TEST_CREDS_FILE)).toBe(false)
+
+      setEnv('CLAUDE_CREDENTIALS', '{bad-json')
+      cm = makeManager()
+      cm.detectAuthMode()
+      await cm.bootstrap()
+      expect(fs.existsSync(TEST_CREDS_FILE)).toBe(false)
+    })
+
     it('should refresh immediately if token is expiring soon', async () => {
       const creds = makeCreds({ expiresAt: Date.now() + 30 * 60 * 1000 }) // 30min
       setEnv('ANTHROPIC_API_KEY', undefined)
@@ -275,6 +304,23 @@ describe('CredentialManager', () => {
       cm.detectAuthMode()
       await expect(cm.bootstrap()).resolves.toBeUndefined()
 
+      vi.unstubAllGlobals()
+    })
+
+    it('skips refresh when credentials have no refresh token', async () => {
+      const creds = makeCreds({ expiresAt: Date.now() + 30 * 60 * 1000 })
+      creds.claudeAiOauth.refreshToken = ''
+      setEnv('ANTHROPIC_API_KEY', undefined)
+      setEnv('CLAUDE_CREDENTIALS', JSON.stringify(creds))
+
+      const mockFetch = vi.fn()
+      vi.stubGlobal('fetch', mockFetch)
+
+      const cm = makeManager()
+      cm.detectAuthMode()
+      await cm.bootstrap()
+
+      expect(mockFetch).not.toHaveBeenCalled()
       vi.unstubAllGlobals()
     })
 
@@ -431,6 +477,19 @@ describe('CredentialManager', () => {
       fs.rmSync(TEST_CREDS_FILE)
 
       // Should not throw
+      await expect(cm.syncFromFile()).resolves.toBeUndefined()
+    })
+
+    it('ignores invalid credentials file content during sync', async () => {
+      const creds = makeCreds({ expiresAt: Date.now() + 2 * 3600 * 1000 })
+      setEnv('ANTHROPIC_API_KEY', undefined)
+      setEnv('CLAUDE_CREDENTIALS', JSON.stringify(creds))
+
+      const cm = makeManager()
+      cm.detectAuthMode()
+      await cm.bootstrap()
+      fs.writeFileSync(TEST_CREDS_FILE, '{bad-json')
+
       await expect(cm.syncFromFile()).resolves.toBeUndefined()
     })
   })

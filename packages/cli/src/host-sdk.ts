@@ -32,8 +32,8 @@ function unsupportedTakeover(): never {
 
 const adapters: WanmanHostSdkAdapters<ProjectRunSpec, never, WanmanHostTakeoverOptions> = {
   runGoal,
-  prepareTakeoverLaunch: unsupportedTakeover,
-  executePreparedTakeoverLaunch: unsupportedTakeover,
+  prepareTakeoverPlan: unsupportedTakeover,
+  executePreparedTakeoverPlan: unsupportedTakeover,
   normalizeTakeoverOptions: (options) => options as WanmanHostTakeoverOptions,
 }
 

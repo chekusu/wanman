@@ -48,25 +48,53 @@ export function normalizeAgentRuntime(value?: string | null): AgentRuntime {
 /**
  * Resolve a model identifier for the target runtime.
  *
- * Claude Code CLI understands short names ('haiku', 'sonnet') natively, so
- * for claude runtime we pass through as-is. For non-claude runtimes, we map
- * Claude model names to equivalent tiers.
+ * Generated configs use abstract tiers ('high', 'standard') so they are not
+ * tied to a single provider's concrete model names. Runtime-specific defaults
+ * stay here, where operators can override them with env vars.
  */
-const CLAUDE_MODEL_TIER: Record<string, 'high' | 'standard'> = {
-  'opus': 'high', 'claude-opus-4-6': 'high',
-  'sonnet': 'standard', 'claude-sonnet-4-6': 'standard',
-  'haiku': 'standard', 'claude-haiku-4-5': 'standard',
+type ModelQuality = 'high' | 'standard';
+
+const ABSTRACT_MODEL_TIER: Record<string, ModelQuality> = {
+  'high': 'high',
+  'standard': 'standard',
 };
 
-const RUNTIME_MODEL_DEFAULTS: Record<string, Record<'high' | 'standard', string>> = {
+const CLAUDE_MODEL_TIER: Record<string, ModelQuality> = {
+  'opus': 'high',
+  'claude-opus-4-6': 'high',
+  'sonnet': 'standard',
+  'claude-sonnet-4-6': 'standard',
+  'haiku': 'standard',
+  'claude-haiku-4-5': 'standard',
+};
+
+const FALLBACK_RUNTIME_MODEL_DEFAULTS: Record<AgentRuntime, Record<ModelQuality, string>> = {
+  claude: { high: 'opus', standard: 'sonnet' },
   codex: { high: 'gpt-5.4', standard: 'gpt-5.4' },
 };
 
+function providerModelOverride(runtime: AgentRuntime): string | undefined {
+  return runtime === 'codex'
+    ? process.env['WANMAN_CODEX_MODEL']
+    : process.env['WANMAN_CLAUDE_MODEL'];
+}
+
+function runtimeDefaultModel(runtime: AgentRuntime, tier: ModelQuality): string {
+  const runtimeKey = runtime.toUpperCase();
+  const tierKey = tier.toUpperCase();
+  return process.env[`WANMAN_${runtimeKey}_${tierKey}_MODEL`]
+    ?? process.env[`WANMAN_${tierKey}_MODEL`]
+    ?? providerModelOverride(runtime)
+    ?? process.env['WANMAN_MODEL']
+    ?? FALLBACK_RUNTIME_MODEL_DEFAULTS[runtime][tier];
+}
+
 export function resolveModel(model: string, runtime: AgentRuntime): string {
-  if (runtime === 'claude') return model;
-  const tier = CLAUDE_MODEL_TIER[model];
+  const normalized = model.trim().toLowerCase();
+  const tier = ABSTRACT_MODEL_TIER[normalized]
+    ?? (runtime === 'claude' ? undefined : CLAUDE_MODEL_TIER[normalized]);
   if (!tier) return model;
-  return RUNTIME_MODEL_DEFAULTS[runtime]?.[tier] ?? model;
+  return runtimeDefaultModel(runtime, tier);
 }
 
 export function resolveAgentRuntime(definition: AgentDefinition): AgentRuntime {

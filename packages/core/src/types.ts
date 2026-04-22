@@ -7,7 +7,7 @@ export type AgentRuntime = 'claude' | 'codex';
 /** Codex reasoning effort / speed tier */
 export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
-/** Model identifier — runtime-dependent (e.g. 'claude-opus-4-6', 'o3', 'o4-mini') */
+/** Model identifier or abstract tier — runtime-dependent (e.g. 'high', 'standard', 'o4-mini') */
 export type ModelTier = string;
 
 /** Message priority — steer interrupts current work, normal waits */
@@ -138,7 +138,7 @@ export interface ChangeCapsule {
 // ── Auth types ──
 
 /** Supported CLI auth providers */
-export type AuthProviderName = 'stripe' | 'github' | 'cloudflare' | 'claude' | 'codex';
+export type AuthProviderName = 'github' | 'claude' | 'codex';
 
 /** Auth status for a provider */
 export type AuthStatus = 'authenticated' | 'unauthenticated' | 'pending' | 'error';

@@ -56,6 +56,7 @@ describe('spawnCodexExec', () => {
 
   afterEach(() => {
     delete process.env['WANMAN_RUNTIME'];
+    vi.useRealTimers();
   });
 
   it('spawns codex exec with required flags', () => {
@@ -113,6 +114,47 @@ describe('spawnCodexExec', () => {
       ]),
       expect.objectContaining({ cwd: '/tmp/work' }),
     );
+  });
+
+  it('omits invalid reasoning effort values and falls back to a default task prompt', () => {
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+
+    spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      reasoningEffort: 'turbo' as never,
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+      initialMessage: '   ',
+    });
+
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    expect(args.some((value) => value.includes('model_reasoning_effort'))).toBe(false);
+    expect(args.at(-1)).toContain('Start working.');
+  });
+
+  it('uses runuser when a root supervisor runs an agent as another user', () => {
+    const getuid = process.getuid ? vi.spyOn(process, 'getuid').mockReturnValue(0) : undefined;
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+
+    spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+      runAsUser: 'agent',
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'runuser',
+      expect.arrayContaining(['-u', 'agent', '--', 'codex']),
+      expect.objectContaining({
+        env: expect.objectContaining({ HOME: '/home/agent' }),
+      }),
+    );
+    getuid?.mockRestore();
   });
 
   it('passes fast mode through as service_tier and fast_mode config overrides', () => {
@@ -218,6 +260,50 @@ describe('spawnCodexExec', () => {
     expect(results).toEqual([{ text: 'network timeout', isError: true }]);
   });
 
+  it('parses turn.completed events with nested content arrays', async () => {
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+
+    const handle = spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+    });
+
+    const results: Array<{ text: string; isError: boolean }> = [];
+    handle.onResult((text, isError) => results.push({ text, isError }));
+
+    proc.stdout.write(`${JSON.stringify({
+      type: 'turn.completed',
+      content: [{ text: '' }, { content: 'Nested complete' }],
+    })}\n`);
+    await flushEvents();
+
+    expect(results).toEqual([{ text: 'Nested complete', isError: false }]);
+  });
+
+  it('skips blank and non-JSON stdout lines and logs stderr text', async () => {
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+
+    const handle = spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+    });
+    const events: Array<Record<string, unknown>> = [];
+    handle.onEvent(event => events.push(event));
+
+    proc.stdout.write('\nnot-json\n');
+    proc.stderr.write(' warning from codex \n');
+    await flushEvents();
+
+    expect(events).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith('stderr', { text: 'warning from codex' });
+  });
+
   it('wait resolves with the close exit code', async () => {
     const proc = createMockProc();
     spawnMock.mockReturnValue(proc);
@@ -235,5 +321,61 @@ describe('spawnCodexExec', () => {
     proc.emit('close', 17);
 
     await expect(waitPromise).resolves.toBe(17);
+  });
+
+  it('wait resolves immediately when the process already has an exit code', async () => {
+    const proc = createMockProc();
+    proc.exitCode = 0;
+    spawnMock.mockReturnValue(proc);
+
+    const handle = spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+    });
+
+    await expect(handle.wait()).resolves.toBe(0);
+  });
+
+  it('notifies exit handlers for spawn errors and close events', () => {
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+
+    const handle = spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+    });
+    const exits: number[] = [];
+    handle.onExit(code => exits.push(code));
+
+    proc.emit('error', new Error('spawn failed'));
+    proc.emit('close', null);
+
+    expect(exits).toEqual([1, 1]);
+  });
+
+  it('kills with SIGTERM and escalates to SIGKILL if the process remains alive', async () => {
+    vi.useFakeTimers();
+    const proc = createMockProc();
+    proc.kill = vi.fn((signal?: string) => {
+      if (signal === 'SIGKILL') proc.killed = true;
+      return true;
+    });
+    spawnMock.mockReturnValue(proc);
+
+    const handle = spawnCodexExec({
+      runtime: 'codex',
+      model: 'gpt-5.4',
+      systemPrompt: 'System prompt',
+      cwd: '/tmp/work',
+    });
+
+    handle.kill();
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
   });
 });

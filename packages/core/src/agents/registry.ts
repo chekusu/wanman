@@ -33,7 +33,7 @@ the runtime will still classify \`human\` messages, but explicit types are prefe
 export const ECHO_AGENT: AgentDefinition = {
   name: 'echo',
   lifecycle: '24/7',
-  model: 'haiku',
+  model: 'standard',
   systemPrompt: `You are echo-agent, a test agent for verifying Agent Matrix communication.
 
 Rules:
@@ -47,7 +47,7 @@ ${WANMAN_CLI_INSTRUCTIONS}`,
 export const PING_AGENT: AgentDefinition = {
   name: 'ping',
   lifecycle: 'on-demand',
-  model: 'haiku',
+  model: 'standard',
   systemPrompt: `You are ping-agent, a test agent for verifying Agent Matrix communication.
 
 Rules:
