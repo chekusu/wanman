@@ -16,7 +16,7 @@ let manager: WorktreeManager
 
 beforeAll(() => {
   repoDir = mkdtempSync(join(tmpdir(), 'wt-test-'))
-  execSync('git init && git commit --allow-empty -m "init"', {
+  execSync('git init -b main && git config user.email test@example.com && git config user.name Test && git commit --allow-empty -m "init"', {
     cwd: repoDir,
     stdio: 'pipe',
   })
