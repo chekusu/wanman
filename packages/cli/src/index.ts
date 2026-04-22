@@ -51,8 +51,8 @@ Usage:
   wanman hypothesis create <title> [flags] Create a hypothesis
   wanman hypothesis list [--status s]      List hypotheses
   wanman hypothesis update <id> --status s Update hypothesis
-  wanman run <goal> [options]              Start agent matrix with a goal (host only)
-  wanman takeover <path> [options]         Take over an existing git repo (host only)
+  wanman run <goal> [options]              Start agent matrix with a goal
+  wanman takeover <path> [options]         Take over an existing git repo
   wanman watch                             Watch supervisor/runtime activity
   wanman skill:check [path]                Validate skill command references
 
@@ -96,16 +96,8 @@ export async function run(command: string | undefined, args: string[]): Promise<
         await hypothesisCommand(args);
         break;
       case 'run': {
-        try {
-          const { runCommand } = await import('./commands/run.js')
-          await runCommand(args)
-        } catch (e) {
-          if (e instanceof Error && (e.message.includes('Cannot find module') || e.message.includes('ERR_MODULE_NOT_FOUND'))) {
-            console.error('"wanman run" is only available on the host machine, not inside a sandbox.')
-            process.exit(1)
-          }
-          throw e
-        }
+        const { runCommand } = await import('./commands/run.js')
+        await runCommand(args)
         break
       }
       case 'watch': {
@@ -119,16 +111,8 @@ export async function run(command: string | undefined, args: string[]): Promise<
         break
       }
       case 'takeover': {
-        try {
-          const { takeoverCommand } = await import('./commands/takeover.js')
-          await takeoverCommand(args)
-        } catch (e) {
-          if (e instanceof Error && (e.message.includes('Cannot find module') || e.message.includes('ERR_MODULE_NOT_FOUND'))) {
-            console.error('"wanman takeover" is only available on the host machine, not inside a sandbox.')
-            process.exit(1)
-          }
-          throw e
-        }
+        const { takeoverCommand } = await import('./commands/takeover.js')
+        await takeoverCommand(args)
         break
       }
       case 'help':

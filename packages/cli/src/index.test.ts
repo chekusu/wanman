@@ -104,30 +104,13 @@ describe('run command routing', () => {
     vi.doUnmock('./commands/run.js')
   })
 
-  it('shows sandbox error when run module not found', async () => {
-    // Simulate sandbox environment where run.js is externalized and import fails
-    const mockRunCommand = vi.fn().mockRejectedValue(
-      new Error('Cannot find module ./commands/run.js ERR_MODULE_NOT_FOUND'),
-    )
+  it('surfaces errors thrown by the run command', async () => {
+    const mockRunCommand = vi.fn().mockRejectedValue(new Error('boom'))
     vi.doMock('./commands/run.js', () => ({ runCommand: mockRunCommand }))
 
     const { run: runFn } = await import('./index.js')
     await expect(runFn('run', ['goal'])).rejects.toThrow('process.exit')
-    expect(console.error).toHaveBeenCalledWith(
-      '"wanman run" is only available on the host machine, not inside a sandbox.',
-    )
-    expect(process.exit).toHaveBeenCalledWith(1)
-
-    vi.doUnmock('./commands/run.js')
-  })
-
-  it('re-throws non-module errors from run command', async () => {
-    const mockRunCommand = vi.fn().mockRejectedValue(new Error('sandbox creation failed'))
-    vi.doMock('./commands/run.js', () => ({ runCommand: mockRunCommand }))
-
-    const { run: runFn } = await import('./index.js')
-    await expect(runFn('run', ['goal'])).rejects.toThrow('process.exit')
-    expect(console.error).toHaveBeenCalledWith('sandbox creation failed')
+    expect(console.error).toHaveBeenCalledWith('boom')
 
     vi.doUnmock('./commands/run.js')
   })
