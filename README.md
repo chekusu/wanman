@@ -19,6 +19,12 @@ The name wanman comes from the Japanese [ワンマン電車 / one-man train](htt
 - Isolates every agent in a per-agent worktree and per-agent `$HOME`, so agents never mutate your dirty checkout or shell profile.
 - Is CLI-first: everything is scriptable, observable, and reproducible through `wanman` commands and a JSON-RPC supervisor.
 
+[wanman.ai](https://wanman.ai/) adds hosted-only capabilities:
+- Isolates each agent runtime group in its own sandbox environment, supporting large-scale, high-concurrency task execution.
+- Dynamically configures agent roles, including automatically extracting roles from high-quality agent role catalogs on the internet.
+- Supports dynamic skill self-evolution.
+- Supports db9-powered global search and story retrieval.
+
 ## Quickstart
 
 ```bash

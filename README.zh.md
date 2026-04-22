@@ -19,6 +19,12 @@ wanman 这个名字来自日语里的 [ワンマン电车 / one-man train](https
 - 将每个 agent 隔离在独立的 worktree 和独立的 `$HOME` 中，这样 agent 绝不会修改你未提交的工作区或 shell 配置文件。
 - CLI 优先：一切都可通过 `wanman` 命令和 JSON-RPC supervisor 脚本化、可观测、可复现。
 
+[wanman.ai](https://wanman.ai/) 额外提供托管版独有能力：
+- 每组 agent runtime 隔离在单独的 sandbox 环境中，支持大规模、高并发任务执行。
+- 动态配置 agents 角色，支持自动从互联网上优秀的 agent 角色清单中提取角色。
+- 支持动态 skill 自进化。
+- 支持通过 db9 进行全局搜索和故事检索。
+
 ## 快速开始
 
 ```bash
