@@ -24,6 +24,9 @@ export type {
   AuthProviderInfo,
 } from './types.js';
 
+// Utilities
+export { isGitHubRepoUrl } from './github-repo-url.js';
+
 // Protocol
 export {
   RPC_ERRORS,
