@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { localizeRunConfigForHost } from './execution-session.js'
 
 describe('localizeRunConfigForHost', () => {
-  it('rewrites local config paths away from sandbox defaults', () => {
+  it('rewrites config paths to the host run layout', () => {
     const configText = JSON.stringify({
       agents: [{ name: 'ceo', lifecycle: '24/7', model: 'claude-opus-4-6', systemPrompt: 'CEO' }],
       dbPath: '/workspace/wanman.db',

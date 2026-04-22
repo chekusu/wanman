@@ -4,7 +4,5 @@ export default defineWorkspace([
   'packages/core',
   'packages/runtime',
   'packages/cli',
-  'packages/sandbox',
-  'apps/api',
-  'scripts',
+  'packages/host-sdk',
 ])

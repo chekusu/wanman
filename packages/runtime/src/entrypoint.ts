@@ -14,9 +14,9 @@ const log = createLogger('entrypoint');
 async function main(): Promise<void> {
   log.info('wanman agent matrix starting...');
 
-  // Decode WANMAN_GOAL_B64 (set by run-sandbox-executor) into WANMAN_GOAL so
-  // downstream code that reads process.env.WANMAN_GOAL keeps working without
-  // ever having to pass the raw goal through a shell.
+  // Decode WANMAN_GOAL_B64 into WANMAN_GOAL so downstream code that reads
+  // process.env.WANMAN_GOAL keeps working without ever having to pass the
+  // raw goal through a shell.
   const goalB64 = process.env['WANMAN_GOAL_B64'];
   if (goalB64 && !process.env['WANMAN_GOAL']) {
     try {

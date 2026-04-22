@@ -6,7 +6,6 @@ interface ConcreteTakeoverOptions {
   goalOverride?: string
   runtime: 'claude' | 'codex'
   githubToken?: string
-  local: boolean
   enableBrain: boolean
 }
 
@@ -24,15 +23,16 @@ const hostSdkAdapters: WanmanHostSdkAdapters<Record<string, never>, typeof prepa
   runGoal: adapters.runGoal,
   prepareTakeoverLaunch: adapters.prepareTakeoverLaunch,
   executePreparedTakeoverLaunch: adapters.executePreparedTakeoverLaunch,
-  normalizeTakeoverOptions(options, defaultMode) {
-    if ('local' in options) return options
+  normalizeTakeoverOptions(options) {
+    if ('runtime' in options && typeof options.runtime === 'string') {
+      return options as ConcreteTakeoverOptions
+    }
 
     return {
       projectPath: options.projectPath,
       goalOverride: options.goalOverride,
-      runtime: options.runtime ?? 'claude',
+      runtime: (options.runtime as 'claude' | 'codex' | undefined) ?? 'claude',
       githubToken: options.githubToken,
-      local: (options.mode ?? defaultMode) === 'local',
       enableBrain: options.enableBrain ?? true,
     }
   },
@@ -44,7 +44,7 @@ describe('createWanmanHostSdk', () => {
     adapters.prepareTakeoverLaunch.mockReturnValue(preparedLaunch)
   })
 
-  it('defaults runs to sandbox mode with baseline defaults', async () => {
+  it('runs with baseline defaults', async () => {
     const sdk = createWanmanHostSdk({}, hostSdkAdapters)
 
     await sdk.run('ship the feature')
@@ -52,7 +52,6 @@ describe('createWanmanHostSdk', () => {
     expect(adapters.runGoal).toHaveBeenCalledWith(
       'ship the feature',
       expect.objectContaining({
-        local: false,
         loops: 100,
         output: './deliverables',
       }),
@@ -63,23 +62,23 @@ describe('createWanmanHostSdk', () => {
     )
   })
 
-  it('treats local mode as an explicit override', async () => {
+  it('merges caller overrides on top of defaults', async () => {
     const sdk = createWanmanHostSdk({}, hostSdkAdapters)
 
-    await sdk.run('debug locally', { mode: 'local', keep: true })
+    await sdk.run('debug locally', { keep: true })
 
     expect(adapters.runGoal).toHaveBeenCalledWith(
       'debug locally',
       expect.objectContaining({
-        local: true,
         keep: true,
+        loops: 100,
       }),
       {},
       expect.any(Object),
     )
   })
 
-  it('normalizes takeover launches around sandbox-first defaults', async () => {
+  it('normalizes takeover launches around infinite defaults', async () => {
     const sdk = createWanmanHostSdk({}, hostSdkAdapters)
 
     const launch = sdk.prepareTakeover({
@@ -93,13 +92,11 @@ describe('createWanmanHostSdk', () => {
       goalOverride: 'stabilize release',
       runtime: 'claude',
       githubToken: undefined,
-      local: false,
       enableBrain: true,
     })
     expect(adapters.executePreparedTakeoverLaunch).toHaveBeenCalledWith(
       preparedLaunch,
       expect.objectContaining({
-        local: false,
         infinite: true,
         loops: Infinity,
       }),
@@ -126,7 +123,7 @@ describe('createEnvBackedWanmanHostSdk', () => {
 
     expect(adapters.runGoal).toHaveBeenCalledWith(
       'deploy',
-      expect.objectContaining({ local: false }),
+      expect.any(Object),
       {},
       expect.objectContaining({
         hostEnv: expect.objectContaining({

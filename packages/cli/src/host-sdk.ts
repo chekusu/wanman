@@ -11,7 +11,6 @@ import type { ProjectRunSpec } from './execution-session.js'
 import { runGoal } from './run-host.js'
 
 export type {
-  WanmanExecutionMode,
   WanmanHostRunOptions,
   WanmanHostSdkConfig,
   WanmanHostTakeoverOptions,
@@ -44,7 +43,7 @@ export function createWanmanHostSdk(config: WanmanHostSdkConfig = {}): WanmanHos
 
 export function createEnvBackedWanmanHostSdk(
   env: NodeJS.ProcessEnv = process.env,
-  config: Omit<WanmanHostSdkConfig, 'env' | 'sandbank'> = {},
+  config: Omit<WanmanHostSdkConfig, 'env'> = {},
 ): WanmanHostSdk {
   return createBaseEnvBackedWanmanHostSdk(env, config, adapters)
 }

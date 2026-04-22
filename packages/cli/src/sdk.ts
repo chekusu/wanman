@@ -8,7 +8,6 @@ export type {
 } from './host-sdk.js'
 export type {
   RunOptions,
-  WanmanExecutionMode,
   WanmanHostRunOptions,
   WanmanHostSdkConfig,
   WanmanHostTakeoverOptions,

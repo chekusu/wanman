@@ -14,8 +14,6 @@ export interface RunOptions {
   noBrain: boolean
   keep: boolean
   output: string
-  cloneFrom?: string
-  local?: boolean
   infinite: boolean
   errorLimit: number
 }
@@ -35,8 +33,6 @@ export function createDefaultRunOptions(): RunOptions {
     noBrain: false,
     keep: false,
     output: './deliverables',
-    cloneFrom: undefined,
-    local: false,
     infinite: false,
     errorLimit: 20,
   }

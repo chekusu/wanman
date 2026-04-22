@@ -1,6 +1,5 @@
 import { createRunOptions, createTakeoverRunOptions, type RunOptions } from './run-options.js'
 import type {
-  WanmanExecutionMode,
   WanmanHostRunInvocation,
   WanmanHostSdk,
   WanmanHostSdkConfig,
@@ -30,16 +29,7 @@ export interface WanmanHostSdkAdapters<
   ): Promise<void>
   normalizeTakeoverOptions(
     options: TConcreteTakeoverOptions | WanmanHostTakeoverOptions,
-    defaultMode: WanmanExecutionMode,
   ): TConcreteTakeoverOptions
-}
-
-function resolveMode(mode: WanmanExecutionMode | undefined, defaultMode: WanmanExecutionMode): WanmanExecutionMode {
-  return mode ?? defaultMode
-}
-
-function isConcreteRunOptions(options: WanmanHostRunInvocation | undefined): options is RunOptions {
-  return options !== undefined && 'local' in options
 }
 
 function buildHostEnv(config: WanmanHostSdkConfig): NodeJS.ProcessEnv {
@@ -51,16 +41,9 @@ function buildHostEnv(config: WanmanHostSdkConfig): NodeJS.ProcessEnv {
 
 function normalizeRunOptions(
   options: WanmanHostRunInvocation | undefined,
-  defaultMode: WanmanExecutionMode,
   defaults: (overrides?: Partial<RunOptions>) => RunOptions,
 ): RunOptions {
-  if (isConcreteRunOptions(options)) return createRunOptions(options)
-
-  const { mode, ...overrides } = options ?? {}
-  return defaults({
-    ...overrides,
-    local: resolveMode(mode, defaultMode) === 'local',
-  })
+  return defaults(options ?? {})
 }
 
 export function createWanmanHostSdk<
@@ -75,25 +58,23 @@ export function createWanmanHostSdk<
   TPreparedTakeoverLaunch,
   TConcreteTakeoverOptions | WanmanHostTakeoverOptions
 > {
-  const defaultMode = config.defaultMode ?? 'sandbox'
-
   const bindings: WanmanHostSdkBindings = {
     hostEnv: buildHostEnv(config),
   }
 
   return {
     async run(goal, options, spec = {} as TProjectRunSpec) {
-      await adapters.runGoal(goal, normalizeRunOptions(options, defaultMode, createRunOptions), spec, bindings)
+      await adapters.runGoal(goal, normalizeRunOptions(options, createRunOptions), spec, bindings)
     },
 
     prepareTakeover(options) {
-      return adapters.prepareTakeoverLaunch(adapters.normalizeTakeoverOptions(options, defaultMode))
+      return adapters.prepareTakeoverLaunch(adapters.normalizeTakeoverOptions(options))
     },
 
     async executePreparedTakeover(launch, options) {
       await adapters.executePreparedTakeoverLaunch(
         launch,
-        normalizeRunOptions(options, defaultMode, createTakeoverRunOptions),
+        normalizeRunOptions(options, createTakeoverRunOptions),
         bindings,
       )
     },

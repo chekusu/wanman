@@ -1,23 +1,17 @@
 import type { AgentRuntime } from '@wanman/core'
 import type { RunOptions } from './run-options.js'
 
-export type WanmanExecutionMode = 'sandbox' | 'local'
-
 export interface WanmanHostSdkConfig {
   env?: NodeJS.ProcessEnv
-  defaultMode?: WanmanExecutionMode
 }
 
-export interface WanmanHostRunOptions extends Partial<Omit<RunOptions, 'local'>> {
-  mode?: WanmanExecutionMode
-}
+export type WanmanHostRunOptions = Partial<RunOptions>
 
 export interface WanmanHostTakeoverOptions {
   projectPath: string
   goalOverride?: string
   runtime?: AgentRuntime
   githubToken?: string
-  mode?: WanmanExecutionMode
   enableBrain?: boolean
 }
 
