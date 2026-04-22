@@ -8,7 +8,6 @@ export type {
 } from './host-sdk.js'
 export type {
   RunOptions,
-  SandbankCloudConfig,
   WanmanExecutionMode,
   WanmanHostRunOptions,
   WanmanHostSdkConfig,

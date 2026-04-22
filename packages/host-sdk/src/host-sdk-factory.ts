@@ -1,5 +1,4 @@
 import { createRunOptions, createTakeoverRunOptions, type RunOptions } from './run-options.js'
-import { applySandbankCloudConfig, resolveSandbankCloudConfig } from './sandbank-config.js'
 import type {
   WanmanExecutionMode,
   WanmanHostRunInvocation,
@@ -44,12 +43,10 @@ function isConcreteRunOptions(options: WanmanHostRunInvocation | undefined): opt
 }
 
 function buildHostEnv(config: WanmanHostSdkConfig): NodeJS.ProcessEnv {
-  const baseEnv = {
+  return {
     ...process.env,
     ...(config.env ?? {}),
   }
-
-  return applySandbankCloudConfig(baseEnv, config.sandbank)
 }
 
 function normalizeRunOptions(
@@ -114,7 +111,7 @@ export function createEnvBackedWanmanHostSdk<
   TConcreteTakeoverOptions extends object = WanmanHostTakeoverOptions,
 >(
   env: NodeJS.ProcessEnv = process.env,
-  config: Omit<WanmanHostSdkConfig, 'env' | 'sandbank'> = {},
+  config: Omit<WanmanHostSdkConfig, 'env'> = {},
   adapters: WanmanHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverLaunch, TConcreteTakeoverOptions>,
 ): WanmanHostSdk<
   TProjectRunSpec,
@@ -125,7 +122,6 @@ export function createEnvBackedWanmanHostSdk<
     {
       ...config,
       env,
-      sandbank: resolveSandbankCloudConfig(env) ?? undefined,
     },
     adapters,
   )

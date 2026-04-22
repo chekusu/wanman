@@ -1,12 +1,10 @@
 import type { AgentRuntime } from '@wanman/core'
 import type { RunOptions } from './run-options.js'
-import type { SandbankCloudConfig } from './sandbank-config.js'
 
 export type WanmanExecutionMode = 'sandbox' | 'local'
 
 export interface WanmanHostSdkConfig {
   env?: NodeJS.ProcessEnv
-  sandbank?: SandbankCloudConfig
   defaultMode?: WanmanExecutionMode
 }
 

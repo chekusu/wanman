@@ -44,18 +44,8 @@ describe('createWanmanHostSdk', () => {
     adapters.prepareTakeoverLaunch.mockReturnValue(preparedLaunch)
   })
 
-  it('defaults runs to sandbox mode and overlays Sandbank config', async () => {
-    const sdk = createWanmanHostSdk(
-      {
-        sandbank: {
-          apiUrl: 'https://sandbox.example.com',
-          apiKey: 'sb-key',
-          image: 'codebox-pro',
-          cloneFrom: 'box-1',
-        },
-      },
-      hostSdkAdapters,
-    )
+  it('defaults runs to sandbox mode with baseline defaults', async () => {
+    const sdk = createWanmanHostSdk({}, hostSdkAdapters)
 
     await sdk.run('ship the feature')
 
@@ -68,12 +58,7 @@ describe('createWanmanHostSdk', () => {
       }),
       {},
       expect.objectContaining({
-        hostEnv: expect.objectContaining({
-          SANDBANK_URL: 'https://sandbox.example.com',
-          SANDBANK_API_KEY: 'sb-key',
-          SANDBANK_CLOUD_IMAGE: 'codebox-pro',
-          SANDBANK_CLONE_FROM: 'box-1',
-        }),
+        hostEnv: expect.any(Object),
       }),
     )
   })
@@ -128,11 +113,10 @@ describe('createEnvBackedWanmanHostSdk', () => {
     vi.clearAllMocks()
   })
 
-  it('reads Sandbank config from env so callers do not pass it per launch', async () => {
+  it('threads the provided env through to the host bindings', async () => {
     const sdk = createEnvBackedWanmanHostSdk(
       {
-        SANDBANK_URL: 'https://sandbox.example.com',
-        SANDBANK_API_KEY: 'sb-key',
+        CUSTOM_VAR: 'custom-value',
       },
       {},
       hostSdkAdapters,
@@ -146,8 +130,7 @@ describe('createEnvBackedWanmanHostSdk', () => {
       {},
       expect.objectContaining({
         hostEnv: expect.objectContaining({
-          SANDBANK_URL: 'https://sandbox.example.com',
-          SANDBANK_API_KEY: 'sb-key',
+          CUSTOM_VAR: 'custom-value',
         }),
       }),
     )
