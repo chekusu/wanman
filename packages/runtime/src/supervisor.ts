@@ -624,6 +624,9 @@ ${activePaths}`;
 
   private openDatabase(dbPath: string): Database.Database {
     log.info('opening database', { dbPath });
+    if (dbPath !== ':memory:') {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    }
     const db = new Database(dbPath);
     try {
       db.pragma('journal_mode = WAL');
