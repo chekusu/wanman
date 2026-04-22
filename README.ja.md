@@ -6,6 +6,12 @@ Agent Matrix フレームワーク — 監督下の Claude Code あるいは Cod
 
 wanman はオープンソースのローカルモード Agent Matrix フレームワークです。監督下の Claude Code あるいは Codex エージェントのネットワークをあなたのマシン上で動かし、JSON-RPC スーパーバイザーを介して協調動作させます。
 
+## wanman について
+
+wanman という名前は、日本語の [ワンマン電車 / one-man train](https://en.wikipedia.org/wiki/One-person_operation) に由来します。車掌なしで 1 人の運転士が運行する電車です。wanman の設計目標もこのイメージに近く、人間のユーザーが観察者の役割に退き、agent matrix が自動実行される様子を全方位から観察できるようにすることです。
+
+[wanman.ai](https://wanman.ai/) は、wanman の完全自動 24/7 サンドボックス版を提供しています。これは [Sandbank Cloud](https://sandbank.cloud/) のサンドボックスクラウド上で完全無料で動作します。
+
 ## 何をするか
 
 - 複数のエージェント（CEO、dev、devops、marketing、feedback など）を、steer/follow-up 優先度付きの非同期メッセージバスで連携させます。

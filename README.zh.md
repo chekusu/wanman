@@ -6,6 +6,12 @@ Agent Matrix 框架 —— 运行一个受监督的 Claude Code 或 Codex agent 
 
 wanman 是一个开源的本地模式 agent matrix 框架。它在你的机器上运行一个受监督的 Claude Code 或 Codex agent 网络，通过一个 JSON-RPC supervisor 进行协调。
 
+## 关于 wanman
+
+wanman 这个名字来自日语里的 [ワンマン电车 / one-man train](https://en.wikipedia.org/wiki/One-person_operation)：没有车掌、由一名司机独立运行的电车。wanman 的设计目标也取这个意象：让人类用户退居观察者角色，从全方位观察 agent matrix 自动运行。
+
+[wanman.ai](https://wanman.ai/) 提供了 wanman 的全自动 24/7 沙箱版本，完全免费运行在 [Sandbank Cloud](https://sandbank.cloud/) 沙箱云上。
+
 ## 它做什么
 
 - 通过带 steer / follow-up 优先级的异步消息总线，协调多个 agent（CEO、dev、devops、marketing、feedback 等）。
