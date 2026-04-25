@@ -759,6 +759,141 @@ describe('Supervisor', () => {
     })
   })
 
+  describe('dashboard event history', () => {
+    it('surfaces full live event history from the supervisor event bus', () => {
+      const bus = supervisor.initEventBus('run-dashboard')
+      for (let loop = 1; loop <= 15; loop++) {
+        bus.tick()
+        bus.emit({
+          type: 'queue.backlog',
+          runId: 'run-dashboard',
+          loop,
+          agent: 'echo',
+          pendingMessages: loop,
+          timestamp: new Date(`2026-04-25T09:00:${String(loop).padStart(2, '0')}.000Z`).toISOString(),
+        })
+      }
+
+      const data = supervisor.getDashboardData()
+      expect(data.live.note).toContain('event bus')
+      expect(data.live.events).toHaveLength(30)
+      expect(data.live.events[0]?.kind).toBe('loop.tick')
+      expect(data.live.events[1]?.message).toContain('echo has 1 queued message')
+      expect(data.live.events[29]?.message).toContain('echo has 15 queued message')
+      expect(data.live.events[29]?.raw).toContain('"pendingMessages":15')
+      expect(data.live.eventSource).toBe('supervisor-event-bus')
+      expect(data.live.streamAvailable).toBe(true)
+      expect(data.healthChecks).toContainEqual({ label: 'Runtime event stream', status: 'active' })
+    })
+
+    it('replays full current-run history to dashboard stream subscribers before live events', () => {
+      const bus = supervisor.initEventBus('run-dashboard-replay')
+      bus.tick()
+      bus.emit({
+        type: 'agent.spawned',
+        runId: 'run-dashboard-replay',
+        loop: 1,
+        agent: 'echo',
+        lifecycle: '24/7',
+        trigger: 'startup',
+        timestamp: new Date('2026-04-25T09:00:01.000Z').toISOString(),
+      })
+
+      const streamed: Array<{ kind: string; message: string }> = []
+      const unsubscribe = supervisor.subscribeDashboardEvents((event) => {
+        streamed.push({ kind: event.kind, message: event.message })
+      })
+      bus.emit({
+        type: 'artifact.created',
+        runId: 'run-dashboard-replay',
+        loop: 1,
+        agent: 'echo',
+        kind: 'md',
+        path: 'output/report.md',
+        timestamp: new Date('2026-04-25T09:00:02.000Z').toISOString(),
+      })
+      unsubscribe()
+
+      expect(streamed).toHaveLength(3)
+      expect(streamed[0]?.kind).toBe('loop.tick')
+      expect(streamed[1]?.message).toContain('echo spawned via startup')
+      expect(streamed[2]?.message).toContain('echo created md at output/report.md')
+    })
+
+    it('does not parse live-dashboard.txt into the dashboard event feed', () => {
+      const overlayRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wanman-dashboard-overlay-'))
+      const workspaceRoot = path.join(overlayRoot, 'workspace')
+      fs.mkdirSync(workspaceRoot, { recursive: true })
+      fs.writeFileSync(
+        path.join(overlayRoot, 'live-dashboard.txt'),
+        [
+          '\u001b[1mwanman run legacy summary\u001b[22m',
+          'Brain: legacy-brain',
+          '  09:00:00 agent legacy event one',
+          '  09:00:01 agent legacy event two',
+        ].join('\n'),
+      )
+      const sv = new Supervisor(makeConfig({ workspaceRoot }))
+
+      try {
+        const data = sv.getDashboardData()
+        expect(data.live.summary).toBe('wanman run legacy summary')
+        expect(data.live.brain).toBe('legacy-brain')
+        expect(data.live.events).toEqual([])
+        expect(data.live.eventSource).toBe('unavailable')
+        expect(data.live.streamAvailable).toBe(false)
+        expect(data.live.note).toContain('event history is unavailable')
+      } finally {
+        fs.rmSync(overlayRoot, { recursive: true, force: true })
+      }
+    })
+
+    it('includes runtime audit log lines in dashboard event history', () => {
+      const overlayRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wanman-dashboard-audit-'))
+      const workspaceRoot = path.join(overlayRoot, 'workspace')
+      fs.mkdirSync(workspaceRoot, { recursive: true })
+      fs.writeFileSync(
+        path.join(overlayRoot, 'runtime-audit.log'),
+        [
+          '{"ts":"2026-04-25T09:00:00.000Z","level":"info","scope":"agent-process","msg":"spawning agent","agent":"dev"}',
+          '\u001b[32m09:00:00 supervisor rpc (ceo)\u001b[39m',
+          'raw child stderr without timestamp',
+        ].join('\n'),
+      )
+      const sv = new Supervisor(makeConfig({ workspaceRoot }))
+
+      try {
+        const data = sv.getDashboardData()
+        expect(data.live.events).toHaveLength(3)
+        expect(data.live.events[0]).toMatchObject({
+          time: '09:00:00',
+          source: 'runtime-audit',
+          kind: 'agent-process',
+          agent: 'dev',
+          message: 'spawning agent',
+          raw: '{"ts":"2026-04-25T09:00:00.000Z","level":"info","scope":"agent-process","msg":"spawning agent","agent":"dev"}',
+        })
+        expect(data.live.events[1]).toMatchObject({
+          time: '09:00:00',
+          source: 'runtime-audit',
+          kind: 'supervisor',
+          agent: 'ceo',
+          message: 'rpc (ceo)',
+          raw: '09:00:00 supervisor rpc (ceo)',
+        })
+        expect(data.live.events[2]).toMatchObject({
+          source: 'runtime-audit',
+          kind: 'log',
+          message: 'raw child stderr without timestamp',
+        })
+        expect(data.live.note).toContain('runtime audit log')
+        expect(data.healthChecks).toContainEqual({ label: 'Runtime audit log', status: 'active' })
+      } finally {
+        fs.rmSync(overlayRoot, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('brain-backed RPC success paths', () => {
     it('stores, lists, and fetches artifacts through the brain manager', async () => {
       const executeSQL = vi.fn().mockResolvedValue([{ id: 42, agent: 'ceo', kind: 'note' }])
