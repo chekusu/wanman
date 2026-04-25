@@ -41,7 +41,7 @@ export interface AgentSpawned {
   runId: string
   loop: number
   agent: string
-  lifecycle: '24/7' | 'on-demand'
+  lifecycle: '24/7' | 'on-demand' | 'idle_cached'
   trigger: 'startup' | 'message' | 'steer' | 'cron' | 'backlog-drain'
   timestamp: string
 }
@@ -120,7 +120,7 @@ export interface LoopSnapshot {
   agents: Array<{
     name: string
     state: 'running' | 'idle' | 'stopped'
-    lifecycle: '24/7' | 'on-demand'
+    lifecycle: '24/7' | 'on-demand' | 'idle_cached'
   }>
   taskTransitions: number
   artifactsCreated: number

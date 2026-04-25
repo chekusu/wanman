@@ -1,5 +1,18 @@
-/** Agent lifecycle mode */
-export type AgentLifecycle = '24/7' | 'on-demand';
+/**
+ * Agent lifecycle mode.
+ *
+ * - `24/7`        — continuous respawn loop. The agent boots a fresh CLI
+ *                   subprocess every iteration. Use for always-on roles.
+ * - `on-demand`   — idle until triggered (cron / steer / message). Each
+ *                   trigger starts a fresh, stateless run.
+ * - `idle_cached` — idle until triggered (like `on-demand`), but the runtime
+ *                   remembers the previous Claude `session_id` and resumes
+ *                   it on the next trigger via `claude --resume`. Combines
+ *                   "no CPU when idle" with "preserved conversation context",
+ *                   which is essential for stateful long-running roles where
+ *                   keeping the process alive forever would be wasteful.
+ */
+export type AgentLifecycle = '24/7' | 'on-demand' | 'idle_cached';
 
 /** Agent runtime backend */
 export type AgentRuntime = 'claude' | 'codex';

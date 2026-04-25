@@ -125,7 +125,7 @@ export class LoopEventBus {
       agents: agentStates.map(a => ({
         name: a.name,
         state: a.state as 'running' | 'idle' | 'stopped',
-        lifecycle: a.lifecycle as '24/7' | 'on-demand',
+        lifecycle: a.lifecycle as '24/7' | 'on-demand' | 'idle_cached',
       })),
       taskTransitions: this.taskTransitions,
       artifactsCreated: this.artifactsCreated,

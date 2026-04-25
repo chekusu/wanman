@@ -123,7 +123,7 @@ Agent definitions live in a single JSON file:
 
 Each agent entry has:
 - `name` — unique identifier used on the message bus.
-- `lifecycle` — `24/7` (continuous respawn loop) or `on-demand` (idle until triggered).
+- `lifecycle` — `24/7` (continuous respawn loop), `on-demand` (idle until triggered), or `idle_cached` (idle until triggered, but the prior Claude `session_id` is preserved across triggers via `claude --resume` so context survives idle periods).
 - `model` — usually an abstract tier (`high` or `standard`); the runtime adapter maps it to Claude or Codex defaults, with environment overrides available.
 - `systemPrompt` — baked-in persona/mission; agents also auto-discover shared skill files at `~/.claude/skills/`.
 - Optional `cron`, `events`, and `tools` fields — see the architecture doc for the full schema.

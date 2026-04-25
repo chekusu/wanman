@@ -39,8 +39,21 @@ export interface ClaudeCodeProcess {
   onEvent(handler: (event: ClaudeEvent) => void): void;
   /** Register a handler for the final result */
   onResult(handler: (result: string, isError: boolean) => void): void;
+  /**
+   * Register a handler invoked when Claude reports its session id (via the
+   * `system/init` event). Use this to persist the id and pass it back as
+   * `resumeSessionId` on the next spawn.
+   */
+  onSessionId(handler: (sessionId: string) => void): void;
   /** Register a handler for process exit */
   onExit(handler: (code: number) => void): void;
+  /**
+   * True iff Claude refused to resume the requested `resumeSessionId`
+   * (i.e. the session was not found locally). Callers can check this after
+   * exit and retry the spawn without `resumeSessionId` for cold-start
+   * recovery.
+   */
+  resumeMissed(): boolean;
 }
 
 export interface SpawnOptions {
@@ -50,6 +63,14 @@ export interface SpawnOptions {
   /** Initial user message to send immediately after spawn */
   initialMessage?: string;
   sessionId?: string;
+  /**
+   * If set, append `--resume <id>` to the Claude CLI args so the new process
+   * picks up where the previous process left off. The previous run's session
+   * id is reported via `onSessionId`. If the local Claude session store has
+   * dropped the id (rotated, manually deleted, etc.) the spawn surfaces this
+   * via `resumeMissed()` so the caller can retry without the flag.
+   */
+  resumeSessionId?: string;
   /** Extra environment variables to inject into the spawned process */
   env?: Record<string, string>;
   /** Run claude as this user (via runuser). When unset, runs as current user. */
@@ -64,7 +85,7 @@ export interface SpawnOptions {
  * get structured JSONL on stdout.
  */
 export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
-  const { model, systemPrompt, cwd, initialMessage, sessionId } = opts;
+  const { model, systemPrompt, cwd, initialMessage, sessionId, resumeSessionId } = opts;
 
   const claudeArgs = [
     '--model', model,
@@ -74,6 +95,10 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
     '--verbose',
     '--system-prompt', systemPrompt,
   ];
+
+  if (resumeSessionId) {
+    claudeArgs.push('--resume', resumeSessionId);
+  }
 
   // When running as root and runAsUser is set, use runuser to switch user
   const runAsUser = opts.runAsUser;
@@ -104,7 +129,10 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
 
   const eventHandlers: Array<(event: ClaudeEvent) => void> = [];
   const resultHandlers: Array<(result: string, isError: boolean) => void> = [];
+  const sessionIdHandlers: Array<(sessionId: string) => void> = [];
   const exitHandlers: Array<(code: number) => void> = [];
+  let observedSessionId: string | null = null;
+  let resumeMissed = false;
 
   // Parse JSONL from stdout
   let rl: ReadlineInterface | null = null;
@@ -115,6 +143,19 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
       try {
         const event = JSON.parse(line.trim()) as ClaudeEvent;
         for (const handler of eventHandlers) handler(event);
+
+        // Capture the session id from system/init so callers can persist it
+        // for `resumeSessionId` on the next spawn.
+        if (
+          event.type === 'system'
+          && event.subtype === 'init'
+          && typeof event.session_id === 'string'
+          && event.session_id
+          && observedSessionId !== event.session_id
+        ) {
+          observedSessionId = event.session_id;
+          for (const handler of sessionIdHandlers) handler(event.session_id);
+        }
 
         // Detect final result
         if (event.type === 'result') {
@@ -127,11 +168,21 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
     });
   }
 
-  // Log stderr
+  // Log stderr — and watch for the "session not found" signal that Claude
+  // emits when `--resume <id>` references a session the local CLI has lost.
   if (proc.stderr) {
     proc.stderr.on('data', (data: Buffer) => {
       const text = data.toString().trim();
-      if (text) log.warn('stderr', { text: text.slice(0, 500) });
+      if (!text) return;
+      if (
+        resumeSessionId
+        && !resumeMissed
+        && /no\s+session\s+found|session\s+(?:not\s+found|does\s+not\s+exist|unavailable)|could\s+not\s+(?:resume|find\s+session)/i.test(text)
+      ) {
+        resumeMissed = true;
+        log.warn('resume session missing', { resumeSessionId, text: text.slice(0, 200) });
+      }
+      log.warn('stderr', { text: text.slice(0, 500) });
     });
   }
 
@@ -187,7 +238,12 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
 
     onEvent(handler) { eventHandlers.push(handler); },
     onResult(handler) { resultHandlers.push(handler); },
+    onSessionId(handler) {
+      sessionIdHandlers.push(handler);
+      if (observedSessionId) handler(observedSessionId);
+    },
     onExit(handler) { exitHandlers.push(handler); },
+    resumeMissed() { return resumeMissed; },
   };
 
   // Send initial message if provided

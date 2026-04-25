@@ -652,17 +652,27 @@ ${activePaths}`;
         }
       });
 
-      // Wake on-demand agents when any message arrives (not just steer)
+      // Wake on-demand / idle_cached agents when any message arrives (not just steer)
       this.relay.setNewMessageCallback((agentName) => {
         const agent = this.agents.get(agentName);
-        if (agent && agent.definition.lifecycle === 'on-demand' && agent.state === 'idle') {
+        if (
+          agent
+          && (agent.definition.lifecycle === 'on-demand' || agent.definition.lifecycle === 'idle_cached')
+          && agent.state === 'idle'
+        ) {
           // Check if any assigned task for this agent has unmet dependencies
           const blocked = this.hasBlockedTasksOnly(agentName);
           if (blocked) {
-            log.info('on-demand agent has only blocked tasks, deferring', { agent: agentName });
+            log.info('idle agent has only blocked tasks, deferring', {
+              agent: agentName,
+              lifecycle: agent.definition.lifecycle,
+            });
             return;
           }
-          log.info('waking on-demand agent for new message', { agent: agentName });
+          log.info('waking idle agent for new message', {
+            agent: agentName,
+            lifecycle: agent.definition.lifecycle,
+          });
           agent.trigger();
         }
       });
@@ -673,9 +683,12 @@ ${activePaths}`;
   private initCronScheduler(): void {
     this.cronScheduler = new CronScheduler((agentName, expression) => {
       this.relay.send('system', agentName, 'cron', { expression }, 'normal');
-      // For on-demand agents, also trigger them
+      // For idle agents (on-demand / idle_cached), also trigger them
       const agent = this.agents.get(agentName);
-      if (agent && agent.definition.lifecycle === 'on-demand') {
+      if (
+        agent
+        && (agent.definition.lifecycle === 'on-demand' || agent.definition.lifecycle === 'idle_cached')
+      ) {
         agent.handleSteer();
       }
     });
@@ -1699,8 +1712,16 @@ ${activePaths}`;
       }
       for (const agentName of unblockedAgents) {
         const agent = this.agents.get(agentName);
-        if (agent && agent.definition.lifecycle === 'on-demand' && agent.state === 'idle') {
-          log.info('waking previously-blocked on-demand agent', { agent: agentName, unlockedBy: completedTaskId });
+        if (
+          agent
+          && (agent.definition.lifecycle === 'on-demand' || agent.definition.lifecycle === 'idle_cached')
+          && agent.state === 'idle'
+        ) {
+          log.info('waking previously-blocked idle agent', {
+            agent: agentName,
+            lifecycle: agent.definition.lifecycle,
+            unlockedBy: completedTaskId,
+          });
           agent.trigger();
         }
       }

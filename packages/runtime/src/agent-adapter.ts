@@ -14,7 +14,19 @@ export interface AgentRunHandle {
   wait(): Promise<number>;
   onEvent(handler: (event: AgentRunEvent) => void): void;
   onResult(handler: (result: string, isError: boolean) => void): void;
+  /**
+   * Adapter-reported session id (e.g. Claude `system/init` event). May fire
+   * zero, one, or multiple times depending on the adapter. Adapters that
+   * cannot report a session id may simply never invoke the handler.
+   */
+  onSessionId?(handler: (sessionId: string) => void): void;
   onExit(handler: (code: number) => void): void;
+  /**
+   * True when the adapter attempted to resume a session id but the runtime
+   * could not find it locally. Used by callers to fall back to a cold start.
+   * Adapters without resume support always return false.
+   */
+  resumeMissed?(): boolean;
 }
 
 export interface AgentRunOptions {
@@ -32,6 +44,13 @@ export interface AgentRunOptions {
   cwd: string;
   initialMessage?: string;
   sessionId?: string;
+  /**
+   * Resume a previously-captured session. The Claude adapter passes this as
+   * `--resume <id>`. Other adapters may ignore it. When the session cannot
+   * be found locally, `AgentRunHandle.resumeMissed()` returns true so the
+   * caller can retry without resume.
+   */
+  resumeSessionId?: string;
   env?: Record<string, string>;
   runAsUser?: string;
 }

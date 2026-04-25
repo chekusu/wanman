@@ -3,6 +3,10 @@
  *
  * - 24/7 agents: run in a loop, respawning when Claude Code exits
  * - on-demand agents: spawned when a message arrives, exit when done
+ * - idle_cached agents: like on-demand, but the runtime persists the
+ *   session id across triggers so the next spawn resumes prior context
+ *   via `claude --resume`. Combines "no CPU when idle" with "preserved
+ *   conversation context" for stateful agents that should not run forever.
  * - steer: when a steer message arrives, kill the current process and
  *   respawn with the steer message prepended (safest approach per design doc)
  */
@@ -115,6 +119,19 @@ export class AgentProcess {
   private envProvider?: EnvironmentProvider;
   /** Latest runtime-reported token usage snapshot for the active run. */
   private currentUsage: TokenUsageSnapshot = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  /**
+   * Most recent session id reported by the underlying CLI (e.g. Claude's
+   * `system/init` event). For `idle_cached` agents this is passed back as
+   * `resumeSessionId` on the next spawn so the agent retains conversation
+   * context across idle periods. Cleared on a stale-session fallback.
+   */
+  private lastSessionId: string | null = null;
+  /**
+   * Set by `registerSessionIdCapture` when the most recent spawn passed a
+   * resume id but the adapter reported the session was unavailable. Read
+   * (and reset) by `trigger()` to drive the cold-start retry path.
+   */
+  private lastSpawnResumeMissed = false;
 
   constructor(
     definition: AgentDefinition,
@@ -142,14 +159,27 @@ export class AgentProcess {
     this.envProvider = envProvider;
   }
 
-  /** Start the agent. For 24/7 agents, enters a run loop. For on-demand, waits. */
+  /**
+   * Start the agent. Behaviour depends on the configured lifecycle:
+   * - `24/7`: enter a respawn loop. Each loop iteration spawns a fresh CLI
+   *   subprocess (with the agent's system prompt + a fresh session by
+   *   default).
+   * - `on-demand`: stay idle. Triggered explicitly by `trigger()` or
+   *   `handleSteer()`; each run is stateless.
+   * - `idle_cached`: stay idle like `on-demand`. Differs only in that
+   *   `lastSessionId` is preserved across triggers, so the next run resumes
+   *   the prior Claude session via `--resume`.
+   */
   async start(): Promise<void> {
     if (this.definition.lifecycle === '24/7') {
       this.runLoop();
     } else {
-      // on-demand: stay idle, will be triggered by handleSteer or trigger()
+      // on-demand / idle_cached: stay idle, will be triggered by handleSteer or trigger()
       this._state = 'idle';
-      log.info('on-demand agent ready', { agent: this.definition.name });
+      log.info('idle agent ready', {
+        agent: this.definition.name,
+        lifecycle: this.definition.lifecycle,
+      });
     }
   }
 
@@ -240,6 +270,7 @@ export class AgentProcess {
 
         // Log tool calls so we can see what each agent is doing
         this.registerEventLogger(this.currentProcess);
+        this.registerSessionIdCapture(this.currentProcess);
 
         // End stdin after initial message (single-shot per spawn)
         this.currentProcess.proc.stdin?.end();
@@ -311,13 +342,21 @@ export class AgentProcess {
       // The run loop will pick up the steer message on next iteration
     }
 
-    // For on-demand agents, trigger a new run
-    if (this.definition.lifecycle === 'on-demand' && this._state === 'idle') {
+    // For on-demand / idle_cached agents, trigger a new run
+    if (
+      (this.definition.lifecycle === 'on-demand' || this.definition.lifecycle === 'idle_cached')
+      && this._state === 'idle'
+    ) {
       this.trigger();
     }
   }
 
-  /** Trigger an on-demand agent — spawn once, then return to idle. */
+  /**
+   * Trigger an on-demand or idle_cached agent — spawn once, then return to
+   * idle. For `idle_cached`, the previous session id is passed as
+   * `resumeSessionId`; if Claude reports the session is unavailable, the
+   * spawn is retried once without resume to force a cold-start.
+   */
   async trigger(): Promise<void> {
     if (this._state === 'running') {
       log.warn('agent already running, ignoring trigger', { agent: this.definition.name });
@@ -357,52 +396,53 @@ export class AgentProcess {
     const runEnv = { ...this.extraEnv, ...dynamicEnv };
     const reasoningEffort = resolveCodexReasoningEffort(runEnv, runtime);
     const fast = resolveCodexFast(runEnv, runtime);
-    log.info('triggering on-demand agent', {
+    const resumeSessionId = this.definition.lifecycle === 'idle_cached'
+      ? this.lastSessionId ?? undefined
+      : undefined;
+    log.info('triggering agent', {
       agent: this.definition.name,
+      lifecycle: this.definition.lifecycle,
       messageCount: pending.length,
       runtime,
       model,
+      ...(resumeSessionId ? { resumeSessionId } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(fast ? { fast: true } : {}),
     });
 
-    this.currentProcess = createAgentAdapter(runtime).startRun({
-      runtime,
-      model,
-      reasoningEffort,
-      fast,
-      systemPrompt: this.definition.systemPrompt,
-      cwd: this.workDir,
-      initialMessage: prompt,
-      env: runEnv,
-      runAsUser: process.env['WANMAN_AGENT_USER'],
+    let exitCode = await this.runOneShot({
+      runtime, model, reasoningEffort, fast, prompt, runEnv, resumeSessionId,
     });
 
-    // Log tool calls so we can see what each agent is doing
-    this.registerEventLogger(this.currentProcess);
-
-    // End stdin — single-shot execution
-    this.currentProcess.proc.stdin?.end();
-
-    // Time budget for on-demand agents
-    let budgetTimer: ReturnType<typeof setTimeout> | null = null;
-    if (this.timeBudgetMs && this.currentProcess) {
-      const proc = this.currentProcess;
-      budgetTimer = setTimeout(() => {
-        log.warn('time budget exceeded, killing on-demand agent', {
-          agent: this.definition.name, budgetMs: this.timeBudgetMs,
-        });
-        proc.kill();
-      }, this.timeBudgetMs);
+    // idle_cached fallback: if Claude reported the resumed session is missing,
+    // retry once without resume so we don't strand the agent.
+    if (
+      this.definition.lifecycle === 'idle_cached'
+      && resumeSessionId
+      && this.lastSpawnResumeMissed
+    ) {
+      log.warn('resume session missing, falling back to cold start', {
+        agent: this.definition.name,
+        staleSessionId: resumeSessionId,
+      });
+      this.lastSessionId = null;
+      this.lastSpawnResumeMissed = false;
+      exitCode = await this.runOneShot({
+        runtime, model, reasoningEffort, fast, prompt, runEnv,
+      });
     }
 
-    const exitCode = await this.currentProcess.wait();
-    if (budgetTimer) clearTimeout(budgetTimer);
     const runDuration = Date.now() - runStartTime;
-    this.currentProcess = null;
     this.setIdleIfActive();
     await this.credentialManager?.syncFromFile();
-    log.info('on-demand agent finished', { agent: this.definition.name, exitCode });
+    log.info('agent finished', {
+      agent: this.definition.name,
+      lifecycle: this.definition.lifecycle,
+      exitCode,
+      ...(this.lastSessionId && this.definition.lifecycle === 'idle_cached'
+        ? { cachedSessionId: this.lastSessionId }
+        : {}),
+    });
 
     // Fire run complete callback for feedback tracking
     try {
@@ -503,6 +543,77 @@ export class AgentProcess {
         });
       }
     });
+  }
+
+  /**
+   * Subscribe to session-id and resume-miss signals from the adapter so
+   * `idle_cached` agents can persist context across triggers. Adapters
+   * without resume support simply never invoke these hooks, leaving
+   * `lastSessionId` unchanged.
+   */
+  private registerSessionIdCapture(proc: AgentRunHandle): void {
+    proc.onSessionId?.((sessionId) => {
+      if (sessionId && this.lastSessionId !== sessionId) {
+        this.lastSessionId = sessionId;
+        log.debug?.('captured session id', {
+          agent: this.definition.name,
+          sessionId,
+        });
+      }
+    });
+    proc.onExit((_code) => {
+      if (proc.resumeMissed?.()) this.lastSpawnResumeMissed = true;
+    });
+  }
+
+  /**
+   * Spawn one CLI subprocess, wait for it to exit, and clean up. Shared
+   * between `trigger()` (single-shot) and the `idle_cached` cold-start
+   * retry path so they apply the same time-budget and lifecycle rules.
+   */
+  private async runOneShot(opts: {
+    runtime: 'claude' | 'codex';
+    model: string;
+    reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | undefined;
+    fast: boolean;
+    prompt: string;
+    runEnv: Record<string, string>;
+    resumeSessionId?: string;
+  }): Promise<number> {
+    this.currentProcess = createAgentAdapter(opts.runtime).startRun({
+      runtime: opts.runtime,
+      model: opts.model,
+      reasoningEffort: opts.reasoningEffort,
+      fast: opts.fast,
+      systemPrompt: this.definition.systemPrompt,
+      cwd: this.workDir,
+      initialMessage: opts.prompt,
+      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
+      env: opts.runEnv,
+      runAsUser: process.env['WANMAN_AGENT_USER'],
+    });
+
+    this.registerEventLogger(this.currentProcess);
+    this.registerSessionIdCapture(this.currentProcess);
+
+    // End stdin — single-shot execution
+    this.currentProcess.proc.stdin?.end();
+
+    let budgetTimer: ReturnType<typeof setTimeout> | null = null;
+    if (this.timeBudgetMs && this.currentProcess) {
+      const proc = this.currentProcess;
+      budgetTimer = setTimeout(() => {
+        log.warn('time budget exceeded, killing agent', {
+          agent: this.definition.name, budgetMs: this.timeBudgetMs,
+        });
+        proc.kill();
+      }, this.timeBudgetMs);
+    }
+
+    const exitCode = await this.currentProcess.wait();
+    if (budgetTimer) clearTimeout(budgetTimer);
+    this.currentProcess = null;
+    return exitCode;
   }
 
   private updateTokenUsage(event: AgentRunEvent): void {

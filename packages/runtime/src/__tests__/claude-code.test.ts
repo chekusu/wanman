@@ -58,6 +58,7 @@ vi.mock('../logger.js', () => ({
 
 // Import after mocks are set up
 const { spawnClaudeCode } = await import('../claude-code.js')
+const { spawn: spawnMock } = await import('child_process')
 
 describe('spawnClaudeCode', () => {
   beforeEach(() => {
@@ -307,6 +308,131 @@ describe('spawnClaudeCode', () => {
     // Second kill should be a no-op since proc.killed is now true
     handle.kill()
     expect(latestProc.kill).not.toHaveBeenCalled()
+  })
+
+  it('should not pass --resume by default', () => {
+    spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+    })
+
+    const calls = (spawnMock as unknown as { mock: { calls: unknown[][] } }).mock.calls
+    const args = calls[calls.length - 1]![1] as string[]
+    expect(args).not.toContain('--resume')
+  })
+
+  it('should pass --resume <id> when resumeSessionId is set', () => {
+    spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+      resumeSessionId: 'session-abc-123',
+    })
+
+    const calls = (spawnMock as unknown as { mock: { calls: unknown[][] } }).mock.calls
+    const args = calls[calls.length - 1]![1] as string[]
+    const idx = args.indexOf('--resume')
+    expect(idx).toBeGreaterThanOrEqual(0)
+    expect(args[idx + 1]).toBe('session-abc-123')
+  })
+
+  it('should fire onSessionId for system/init events', async () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+    })
+
+    const observed: string[] = []
+    handle.onSessionId((id) => observed.push(id))
+
+    latestProc.stdout.push(JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'session-from-init',
+    }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(observed).toEqual(['session-from-init'])
+  })
+
+  it('should not double-fire onSessionId when the same id is reported twice', async () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+    })
+
+    const observed: string[] = []
+    handle.onSessionId((id) => observed.push(id))
+
+    const event = JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'stable-id',
+    }) + '\n'
+    latestProc.stdout.push(event)
+    latestProc.stdout.push(event)
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(observed).toEqual(['stable-id'])
+  })
+
+  it('should replay the latest session id to handlers registered late', async () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+    })
+
+    latestProc.stdout.push(JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'late-handler-id',
+    }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    const observed: string[] = []
+    handle.onSessionId((id) => observed.push(id))
+    expect(observed).toEqual(['late-handler-id'])
+  })
+
+  it('should report resumeMissed false by default', () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+    })
+    expect(handle.resumeMissed()).toBe(false)
+  })
+
+  it('should set resumeMissed when stderr reports the resumed session is missing', async () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+      resumeSessionId: 'stale-session',
+    })
+
+    latestProc.stderr.push(Buffer.from('Error: No session found with id stale-session\n'))
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(handle.resumeMissed()).toBe(true)
+  })
+
+  it('should NOT set resumeMissed when no resumeSessionId was passed', async () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+    })
+
+    latestProc.stderr.push(Buffer.from('Error: No session found\n'))
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(handle.resumeMissed()).toBe(false)
   })
 
   it('should handle result with non-string result field', async () => {

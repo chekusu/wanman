@@ -21,7 +21,20 @@ function deferred<T>() {
 // Per-call wait deferreds
 let waitDeferreds: Array<ReturnType<typeof deferred<number>>>
 let eventHandlers: Array<((event: Record<string, unknown>) => void) | undefined>
+/** Per-call session-id reporter. Tests call this to simulate Claude emitting
+ *  a system/init session id, which AgentProcess captures for idle_cached. */
+let sessionIdReporters: Array<(sessionId: string) => void>
+/** Per-call exit handler — AgentProcess registers one to read resumeMissed
+ *  after the process exits. The mock spawn invokes it on wait()-resolve. */
+let exitReporters: Array<(code: number) => void>
+/** Per-call resumeMissed flag — tests flip this via `setSpawnResumeMissed`
+ *  to simulate Claude refusing the requested --resume id. */
+let resumeMissedFlags: boolean[]
 let spawnCallCount: number
+
+function setSpawnResumeMissed(idx: number, missed: boolean) {
+  resumeMissedFlags[idx] = missed
+}
 
 const mockKill = vi.fn()
 const codexStartRunMock = vi.hoisted(() => vi.fn())
@@ -33,15 +46,30 @@ vi.mock('../claude-code.js', () => ({
       waitDeferreds[idx] = deferred<number>()
     }
     const handlers: { event?: (event: Record<string, unknown>) => void } = {}
+    const sessionIdHandlers: Array<(id: string) => void> = []
+    const exitHandlers: Array<(code: number) => void> = []
     eventHandlers[idx] = (event) => handlers.event?.(event)
+    sessionIdReporters[idx] = (id) => {
+      for (const h of sessionIdHandlers) h(id)
+    }
+    exitReporters[idx] = (code) => {
+      for (const h of exitHandlers) h(code)
+    }
     return {
       proc: { pid: 12345, stdin: { end: vi.fn() } },
-      wait: vi.fn(() => waitDeferreds[idx]!.promise),
+      wait: vi.fn(async () => {
+        const code = await waitDeferreds[idx]!.promise
+        // Mirror real adapter behaviour: onExit fires after wait resolves.
+        for (const h of exitHandlers) h(code)
+        return code
+      }),
       kill: mockKill,
       sendMessage: vi.fn(),
       onEvent: vi.fn((handler) => { handlers.event = handler }),
       onResult: vi.fn(),
-      onExit: vi.fn(),
+      onSessionId: vi.fn((handler) => { sessionIdHandlers.push(handler) }),
+      onExit: vi.fn((handler) => { exitHandlers.push(handler) }),
+      resumeMissed: vi.fn(() => resumeMissedFlags[idx] ?? false),
     }
   }),
 }))
@@ -106,6 +134,9 @@ describe('AgentProcess', () => {
     codexStartRunMock.mockClear()
     waitDeferreds = []
     eventHandlers = []
+    sessionIdReporters = []
+    exitReporters = []
+    resumeMissedFlags = []
     spawnCallCount = 0
     relay = makeRelay()
   })
@@ -140,6 +171,12 @@ describe('AgentProcess', () => {
   describe('start — on-demand', () => {
     it('should stay idle for on-demand agents', async () => {
       const agent = new AgentProcess(makeDef({ lifecycle: 'on-demand' }), relay, '/tmp')
+      await agent.start()
+      expect(agent.state).toBe('idle')
+    })
+
+    it('should stay idle for idle_cached agents (no respawn loop)', async () => {
+      const agent = new AgentProcess(makeDef({ lifecycle: 'idle_cached' }), relay, '/tmp')
       await agent.start()
       expect(agent.state).toBe('idle')
     })
@@ -366,6 +403,132 @@ describe('AgentProcess', () => {
       // No new messages arrived during execution — should NOT re-trigger
       expect(vi.mocked(spawnClaudeCode).mock.calls.length).toBe(1)
       expect(agent.state).toBe('idle')
+    })
+
+    it('on-demand never passes resumeSessionId, even after a session id is observed', async () => {
+      const { spawnClaudeCode } = await import('../claude-code.js')
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[1] = deferred<number>()
+
+      const agent = new AgentProcess(makeDef({ lifecycle: 'on-demand' }), relay, '/tmp')
+
+      // First trigger: relay enqueues msg1, mock fires onSessionId mid-run.
+      relay.send('alice', 'test-agent', 'message', 'msg1', 'normal')
+      const t1 = agent.trigger()
+      await new Promise((r) => setTimeout(r, 5))
+      sessionIdReporters[0]!('session-from-claude-1')
+      waitDeferreds[0].resolve(0)
+      await t1
+
+      // Second trigger should still spawn fresh — on-demand discards the id.
+      relay.send('alice', 'test-agent', 'message', 'msg2', 'normal')
+      const t2 = agent.trigger()
+      await new Promise((r) => setTimeout(r, 5))
+      waitDeferreds[1].resolve(0)
+      await t2
+
+      const calls = vi.mocked(spawnClaudeCode).mock.calls
+      expect(calls.length).toBe(2)
+      expect(calls[0]![0]).not.toHaveProperty('resumeSessionId')
+      expect(calls[1]![0]).not.toHaveProperty('resumeSessionId')
+    })
+  })
+
+  describe('trigger — idle_cached', () => {
+    it('skips resumeSessionId on the very first trigger (no session captured yet)', async () => {
+      const { spawnClaudeCode } = await import('../claude-code.js')
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[0].resolve(0)
+
+      const agent = new AgentProcess(makeDef({ lifecycle: 'idle_cached' }), relay, '/tmp')
+      relay.send('alice', 'test-agent', 'message', 'first message', 'normal')
+
+      await agent.trigger()
+
+      const calls = vi.mocked(spawnClaudeCode).mock.calls
+      expect(calls.length).toBe(1)
+      expect(calls[0]![0].resumeSessionId).toBeUndefined()
+    })
+
+    it('passes the previously-captured session id as resumeSessionId on the next trigger', async () => {
+      const { spawnClaudeCode } = await import('../claude-code.js')
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[1] = deferred<number>()
+
+      const agent = new AgentProcess(makeDef({ lifecycle: 'idle_cached' }), relay, '/tmp')
+
+      relay.send('alice', 'test-agent', 'message', 'msg1', 'normal')
+      const t1 = agent.trigger()
+      await new Promise((r) => setTimeout(r, 5))
+      sessionIdReporters[0]!('captured-session-xyz')
+      waitDeferreds[0].resolve(0)
+      await t1
+
+      relay.send('alice', 'test-agent', 'message', 'msg2', 'normal')
+      const t2 = agent.trigger()
+      await new Promise((r) => setTimeout(r, 5))
+      waitDeferreds[1].resolve(0)
+      await t2
+
+      const calls = vi.mocked(spawnClaudeCode).mock.calls
+      expect(calls.length).toBe(2)
+      expect(calls[0]![0].resumeSessionId).toBeUndefined()
+      expect(calls[1]![0].resumeSessionId).toBe('captured-session-xyz')
+    })
+
+    it('falls back to a cold-start retry without resume when the prior session is missing', async () => {
+      const { spawnClaudeCode } = await import('../claude-code.js')
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[1] = deferred<number>()
+      waitDeferreds[2] = deferred<number>()
+
+      const agent = new AgentProcess(makeDef({ lifecycle: 'idle_cached' }), relay, '/tmp')
+
+      // Run 1: capture a session id.
+      relay.send('alice', 'test-agent', 'message', 'msg1', 'normal')
+      const t1 = agent.trigger()
+      await new Promise((r) => setTimeout(r, 5))
+      sessionIdReporters[0]!('about-to-go-stale')
+      waitDeferreds[0].resolve(0)
+      await t1
+
+      // Run 2: simulate Claude rejecting --resume on the next spawn. The
+      // mock's resumeMissed flag is read inside onExit, which AgentProcess
+      // checks after wait() resolves.
+      setSpawnResumeMissed(1, true)
+      relay.send('alice', 'test-agent', 'message', 'msg2', 'normal')
+      const t2 = agent.trigger()
+      await new Promise((r) => setTimeout(r, 5))
+      waitDeferreds[1].resolve(0)
+      // Wait for AgentProcess to observe resumeMissed and fire the cold-start.
+      await new Promise((r) => setTimeout(r, 10))
+      waitDeferreds[2].resolve(0)
+      await t2
+
+      const calls = vi.mocked(spawnClaudeCode).mock.calls
+      expect(calls.length).toBe(3)
+      // Spawn 1: cold start (no session yet)
+      expect(calls[0]![0].resumeSessionId).toBeUndefined()
+      // Spawn 2: tried to resume the captured id...
+      expect(calls[1]![0].resumeSessionId).toBe('about-to-go-stale')
+      // Spawn 3: cold-start retry after the resume miss
+      expect(calls[2]![0].resumeSessionId).toBeUndefined()
+    })
+
+    it('handleSteer triggers idle_cached agents the same way it triggers on-demand', async () => {
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[0].resolve(0)
+
+      const agent = new AgentProcess(makeDef({ lifecycle: 'idle_cached' }), relay, '/tmp')
+      await agent.start()
+      expect(agent.state).toBe('idle')
+
+      relay.send('alice', 'test-agent', 'message', 'urgent', 'steer')
+      agent.handleSteer()
+
+      // Let the async trigger run to completion.
+      await new Promise((r) => setTimeout(r, 10))
+      expect(spawnCallCount).toBeGreaterThanOrEqual(1)
     })
 
     it('merges per-run environment from envProvider before spawn', async () => {
