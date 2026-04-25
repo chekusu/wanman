@@ -435,6 +435,81 @@ describe('spawnClaudeCode', () => {
     expect(handle.resumeMissed()).toBe(false)
   })
 
+  it('should set resumeMissed for Claude Code 2.1.119 stderr wording', async () => {
+    // Regression: this exact wording was reported by chekusu/wanman#2 reviewer
+    // testing against Claude Code 2.1.119. The earlier regex required
+    // "session" specifically and missed the "conversation" wording.
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+      resumeSessionId: 'abc-stale',
+    })
+
+    latestProc.stderr.push(Buffer.from('No conversation found with session ID: abc-stale\n'))
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(handle.resumeMissed()).toBe(true)
+  })
+
+  it('should set resumeMissed when the failure surfaces on the structured result event', async () => {
+    // Claude Code 2.1.119+ also delivers the failure as a JSONL `result`
+    // event with is_error=true and the message in either result/errors.
+    // Detecting it on the JSONL channel is more stable than stderr because
+    // the JSONL schema is versioned.
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+      resumeSessionId: 'abc-stale',
+    })
+
+    latestProc.stdout.push(JSON.stringify({
+      type: 'result',
+      is_error: true,
+      result: 'No conversation found with session ID: abc-stale',
+    }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(handle.resumeMissed()).toBe(true)
+  })
+
+  it('should set resumeMissed when result event reports the failure inside errors[]', async () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+      resumeSessionId: 'abc-stale',
+    })
+
+    latestProc.stdout.push(JSON.stringify({
+      type: 'result',
+      is_error: true,
+      errors: ['No conversation found with session ID: abc-stale'],
+    }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(handle.resumeMissed()).toBe(true)
+  })
+
+  it('should NOT set resumeMissed for unrelated is_error result events', async () => {
+    const handle = spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+      resumeSessionId: 'abc-stale',
+    })
+
+    latestProc.stdout.push(JSON.stringify({
+      type: 'result',
+      is_error: true,
+      result: 'Max turns exceeded',
+    }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(handle.resumeMissed()).toBe(false)
+  })
+
   it('should handle result with non-string result field', async () => {
     const handle = spawnClaudeCode({
       model: 'haiku',

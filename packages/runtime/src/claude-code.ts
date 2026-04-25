@@ -12,6 +12,51 @@ import { createLogger } from './logger.js';
 
 const log = createLogger('claude-code');
 
+/**
+ * Patterns Claude Code emits when `--resume <id>` references a session the
+ * local CLI no longer has. Recorded across versions:
+ *
+ * - 2.1.119+ (stdout `result` event errors / stderr): `No conversation found with session ID: <id>`
+ * - older / alt wordings:                              `No session found`, `session not found`,
+ *                                                      `session does not exist`, `session unavailable`,
+ *                                                      `could not resume`, `could not find session`,
+ *                                                      `conversation not found`
+ *
+ * The CLI wording has shifted at least once already (`session` → `conversation`),
+ * so the match is intentionally permissive on either noun. Keep this list
+ * here, not inlined, so future CLI wording bumps add one regex alternative
+ * instead of grepping the file. If patterns drift further, the structured
+ * `result.errors` payload (also matched against this regex) is the more
+ * stable surface — we already check that channel.
+ */
+const RESUME_MISSING_PATTERN =
+  /no\s+(?:conversation|session)\s+found|(?:conversation|session)\s+(?:not\s+found|does\s+not\s+exist|unavailable)|could\s+not\s+(?:resume|find\s+(?:conversation|session))/i;
+
+/**
+ * Pull every plausible error-text field off a Claude `result` event and
+ * concatenate them. Claude emits errors in a few shapes depending on
+ * subtype: as `result` (string), `errors` (array of strings or objects),
+ * or `error` (single string). We check all of them so the resume-miss
+ * regex catches the message wherever the CLI puts it that day.
+ */
+function resultErrorText(event: ClaudeEvent): string {
+  const parts: string[] = [];
+  if (typeof event.result === 'string' && event.result.trim()) parts.push(event.result.trim());
+  const errors = (event as Record<string, unknown>)['errors'];
+  if (Array.isArray(errors)) {
+    for (const err of errors) {
+      if (typeof err === 'string' && err.trim()) parts.push(err.trim());
+      else if (err && typeof err === 'object') {
+        const message = (err as Record<string, unknown>)['message'];
+        if (typeof message === 'string' && message.trim()) parts.push(message.trim());
+      }
+    }
+  }
+  const error = (event as Record<string, unknown>)['error'];
+  if (typeof error === 'string' && error.trim()) parts.push(error.trim());
+  return parts.join(' | ');
+}
+
 /** Events emitted by the Claude Code process via JSONL stdout */
 export interface ClaudeEvent extends Record<string, unknown> {
   type: string;
@@ -161,6 +206,24 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
         if (event.type === 'result') {
           const text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
           for (const handler of resultHandlers) handler(text, event.is_error ?? false);
+
+          // Claude Code 2.1.119+ surfaces the stale-resume failure on the
+          // structured `result` event (is_error + "No conversation found
+          // with session ID: ..."), not just stderr. Detecting it here is
+          // more stable than grepping stderr because the JSONL contract is
+          // versioned by Anthropic, while the stderr text has already
+          // shifted once (`session` → `conversation`).
+          if (
+            resumeSessionId
+            && !resumeMissed
+            && event.is_error === true
+          ) {
+            const errorText = resultErrorText(event);
+            if (errorText && RESUME_MISSING_PATTERN.test(errorText)) {
+              resumeMissed = true;
+              log.warn('resume session missing (result event)', { resumeSessionId, text: errorText.slice(0, 200) });
+            }
+          }
         }
       } catch {
         // Skip unparseable lines
@@ -168,8 +231,9 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
     });
   }
 
-  // Log stderr — and watch for the "session not found" signal that Claude
-  // emits when `--resume <id>` references a session the local CLI has lost.
+  // Log stderr — and watch for the same "session/conversation not found"
+  // signal as a fallback in case the CLI version writes the failure to
+  // stderr instead of (or in addition to) the JSONL result event.
   if (proc.stderr) {
     proc.stderr.on('data', (data: Buffer) => {
       const text = data.toString().trim();
@@ -177,10 +241,10 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
       if (
         resumeSessionId
         && !resumeMissed
-        && /no\s+session\s+found|session\s+(?:not\s+found|does\s+not\s+exist|unavailable)|could\s+not\s+(?:resume|find\s+session)/i.test(text)
+        && RESUME_MISSING_PATTERN.test(text)
       ) {
         resumeMissed = true;
-        log.warn('resume session missing', { resumeSessionId, text: text.slice(0, 200) });
+        log.warn('resume session missing (stderr)', { resumeSessionId, text: text.slice(0, 200) });
       }
       log.warn('stderr', { text: text.slice(0, 500) });
     });
