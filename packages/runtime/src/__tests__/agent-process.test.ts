@@ -161,6 +161,48 @@ describe('AgentProcess', () => {
       expect(agent.state).toBe('idle')
     })
 
+    it('rejects idle_cached + declared codex runtime at construction', () => {
+      expect(() => new AgentProcess(
+        makeDef({ name: 'support', lifecycle: 'idle_cached', runtime: 'codex' }),
+        relay,
+        '/tmp/work',
+      )).toThrow(/idle_cached only works with the Claude runtime/)
+    })
+
+    it('rejects idle_cached when WANMAN_RUNTIME forces effective runtime to codex', () => {
+      const original = process.env['WANMAN_RUNTIME']
+      process.env['WANMAN_RUNTIME'] = 'codex'
+      try {
+        expect(() => new AgentProcess(
+          makeDef({ name: 'support', lifecycle: 'idle_cached' }),
+          relay,
+          '/tmp/work',
+        )).toThrow(/forced by WANMAN_RUNTIME=codex/)
+      } finally {
+        if (original === undefined) delete process.env['WANMAN_RUNTIME']
+        else process.env['WANMAN_RUNTIME'] = original
+      }
+    })
+
+    it('accepts idle_cached + claude runtime', () => {
+      const agent = new AgentProcess(
+        makeDef({ name: 'support', lifecycle: 'idle_cached', runtime: 'claude' }),
+        relay,
+        '/tmp/work',
+      )
+      expect(agent.state).toBe('idle')
+      expect(agent.definition.lifecycle).toBe('idle_cached')
+    })
+
+    it('accepts idle_cached with default runtime (claude)', () => {
+      const agent = new AgentProcess(
+        makeDef({ name: 'support', lifecycle: 'idle_cached' }),
+        relay,
+        '/tmp/work',
+      )
+      expect(agent.state).toBe('idle')
+    })
+
     it('should store definition', () => {
       const def = makeDef({ name: 'my-agent' })
       const agent = new AgentProcess(def, relay, '/tmp/work')

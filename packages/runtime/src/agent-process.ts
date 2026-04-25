@@ -146,6 +146,33 @@ export class AgentProcess {
     hasAutonomousWork?: AutonomousWorkChecker,
     envProvider?: EnvironmentProvider,
   ) {
+    // `idle_cached` is Claude-only: the resume mechanism relies on capturing
+    // Claude's `system/init` session id and passing it back as `--resume <id>`.
+    // Codex has no equivalent in this runtime today, so pairing `idle_cached`
+    // with a non-Claude runtime would silently degrade to `on-demand`
+    // semantics (no preserved context).
+    //
+    // Reject at construction using the *effective* runtime (i.e. honoring the
+    // `WANMAN_RUNTIME` env override, not just the declared `agent.runtime`)
+    // so an operator who runs `WANMAN_RUNTIME=codex wanman start` against an
+    // agents.json with idle_cached agents sees the problem at startup, not
+    // after wondering why context is being lost across triggers.
+    if (definition.lifecycle === 'idle_cached') {
+      const effectiveRuntime = resolveAgentRuntime(definition);
+      if (effectiveRuntime !== 'claude') {
+        const declared = definition.runtime ?? '(default)';
+        const overridden = process.env['WANMAN_RUNTIME'] && process.env['WANMAN_RUNTIME'] !== definition.runtime
+          ? ` (forced by WANMAN_RUNTIME=${process.env['WANMAN_RUNTIME']})`
+          : '';
+        throw new Error(
+          `Agent "${definition.name}" has lifecycle "idle_cached" but the effective runtime is "${effectiveRuntime}"${overridden}. `
+          + `idle_cached only works with the Claude runtime — it relies on \`claude --resume\` to restore conversation context across triggers, `
+          + `which Codex has no equivalent for in this runtime. `
+          + `Either keep the runtime as "claude" (declared: "${declared}") or change the lifecycle to "on-demand".`
+        );
+      }
+    }
+
     this.definition = definition;
     this.relay = relay;
     this.workDir = workDir;
@@ -396,6 +423,10 @@ export class AgentProcess {
     const runEnv = { ...this.extraEnv, ...dynamicEnv };
     const reasoningEffort = resolveCodexReasoningEffort(runEnv, runtime);
     const fast = resolveCodexFast(runEnv, runtime);
+    // `idle_cached` agents always pass the captured Claude session id (if
+    // any) — the constructor already rejected the lifecycle paired with a
+    // non-Claude effective runtime, so we can rely on `runtime === 'claude'`
+    // here without re-checking.
     const resumeSessionId = this.definition.lifecycle === 'idle_cached'
       ? this.lastSessionId ?? undefined
       : undefined;

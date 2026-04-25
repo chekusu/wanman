@@ -8,9 +8,13 @@
  * - `idle_cached` — idle until triggered (like `on-demand`), but the runtime
  *                   remembers the previous Claude `session_id` and resumes
  *                   it on the next trigger via `claude --resume`. Combines
- *                   "no CPU when idle" with "preserved conversation context",
- *                   which is essential for stateful long-running roles where
- *                   keeping the process alive forever would be wasteful.
+ *                   "no CPU when idle" with "preserved conversation context".
+ *                   **Claude-only.** The resume mechanism depends on Claude
+ *                   Code's `system/init` session id and `--resume` flag;
+ *                   Codex has no equivalent in this runtime today, so the
+ *                   supervisor rejects `idle_cached` paired with a non-Claude
+ *                   runtime at startup rather than letting it silently
+ *                   degrade to `on-demand` semantics.
  */
 export type AgentLifecycle = '24/7' | 'on-demand' | 'idle_cached';
 
