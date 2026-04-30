@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 // Mock all command modules
 vi.mock('./commands/send.js', () => ({ sendCommand: vi.fn() }));
@@ -193,6 +196,16 @@ describe('direct execution detection', () => {
     const entry = '/tmp/wanman-entry.js'
 
     expect(isDirectCliExecution(new URL(`file://${entry}`).href, ['node', entry])).toBe(true)
+  })
+
+  it('returns true when argv entry is a symlink to the import meta URL', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanman-cli-'))
+    const entry = path.join(tempDir, 'index.js')
+    const linkedEntry = path.join(tempDir, 'wanman')
+    fs.writeFileSync(entry, '')
+    fs.symlinkSync(entry, linkedEntry)
+
+    expect(isDirectCliExecution(new URL(`file://${entry}`).href, ['node', linkedEntry])).toBe(true)
   })
 
   it('returns false without an argv entry', () => {
