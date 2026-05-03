@@ -336,18 +336,48 @@ function isTakeoverFeatureBranch(branch?: string): boolean {
   return !!branch && /^(wanman|fix|feat|chore|docs)\//.test(branch)
 }
 
+function isImplementerAgent(agent?: string): boolean {
+  return !!agent && (agent === 'dev' || agent === 'devops' || /^dev-\d+$/.test(agent))
+}
+
+function isActiveCapsuleStatus(status: string): boolean {
+  return status === 'open' || status === 'in_review'
+}
+
+function isAgentRunning(state: LocalObservationState, agentName: string): boolean {
+  return state.health.agents.some(agent => agent.name === agentName && agent.state === 'running')
+}
+
 /** @internal exported for testing */
 export function collectPrNudgeRecipients(state: LocalObservationState): string[] {
-  const recipients = new Set<string>()
-  for (const task of state.tasks) {
-    if (!task.assignee) continue
-    if (task.status === 'done') continue
-    if (task.assignee === 'dev' || task.assignee === 'devops' || /^dev-\d+$/.test(task.assignee)) {
-      recipients.add(task.assignee)
+  const implementers = [...new Set(
+    state.tasks
+      .filter(task => task.status !== 'done' && task.status !== 'failed' && isImplementerAgent(task.assignee))
+      .map(task => task.assignee as string),
+  )]
+  if (implementers.length === 0) return []
+
+  if (state.activeBranch) {
+    const branchOwners = [...new Set(
+      state.capsules
+        .filter(capsule => capsule.branch === state.activeBranch && isActiveCapsuleStatus(capsule.status) && isImplementerAgent(capsule.ownerAgent))
+        .map(capsule => capsule.ownerAgent as string),
+    )]
+    if (branchOwners.length > 0) {
+      return [...branchOwners, 'ceo']
     }
   }
-  recipients.add('ceo')
-  return [...recipients]
+
+  if (implementers.length === 1) {
+    return [...implementers, 'ceo']
+  }
+
+  const activeImplementerCapsules = state.capsules.filter(capsule => isActiveCapsuleStatus(capsule.status) && isImplementerAgent(capsule.ownerAgent))
+  if (activeImplementerCapsules.length > 1) {
+    return []
+  }
+
+  return [...implementers, 'ceo']
 }
 
 /** @internal exported for testing */
@@ -359,7 +389,7 @@ export function buildPrNudgeSignature(state: LocalObservationState): string {
     modifiedFiles: state.modifiedFiles,
     recipients: collectPrNudgeRecipients(state),
     tasks: state.tasks
-      .filter(task => task.assignee && (task.assignee === 'dev' || task.assignee === 'devops' || /^dev-\d+$/.test(task.assignee)))
+      .filter(task => isImplementerAgent(task.assignee))
       .map(task => ({ id: task.id, status: task.status, assignee: task.assignee })),
   })
 }
@@ -395,6 +425,7 @@ export async function maybeNudgeLocalPrExecution(
 
   const recipients = collectPrNudgeRecipients(state)
   if (recipients.length === 0) return false
+  if (recipients.some(agent => agent !== 'ceo' && isAgentRunning(state, agent))) return false
 
   const signature = buildPrNudgeSignature(state)
   const now = Date.now()
