@@ -45,6 +45,8 @@ export type {
   ProductApiKeySummary,
   ProductDashboardSummary,
   ProductConfig,
+  ProfitabilityTrendPoint,
+  ProviderCategorySpendSummary,
   ProviderName,
   ProviderPricingEntry,
   ProviderPricingRegistry,

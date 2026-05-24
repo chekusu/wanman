@@ -8,6 +8,8 @@ import type {
   FinopsDashboardData,
   ProductConfig,
   ProductDashboardSummary,
+  ProfitabilityTrendPoint,
+  ProviderCategorySpendSummary,
   ProviderName,
   ProviderPricingRegistry,
   ProviderSpendSummary,
@@ -43,7 +45,9 @@ export function buildFinopsDashboardData(options: BuildFinopsDashboardOptions): 
     company: options.company,
     companySummary: summary.byCompany,
     products: allProductIds.map((productId) => productDashboard(productId, options, summary.byProduct)),
+    profitabilityTrend: summarizeProfitabilityTrend(options.costs, options.revenue, options.company.baseCurrency ?? 'USD'),
     providerSpend: summarizeProviderSpend(options.costs),
+    providerCategorySpend: summarizeProviderCategorySpend(options.costs),
     ledgerRows: buildLedgerRows(options.costs, options.revenue, options.usage),
     inventory: options.inventory,
     pricing: options.pricing,
@@ -64,8 +68,13 @@ function productDashboard(
   return {
     productId,
     name: product?.name ?? productId,
+    description: product?.description,
+    owner: product?.owner,
+    lifecycle: product?.lifecycle,
     summary: summaries.find((item) => item.productId === productId) ?? emptySummary(options.company.id, productId, options.company.baseCurrency ?? 'USD'),
+    profitabilityTrend: summarizeProfitabilityTrend(costs, revenue, options.company.baseCurrency ?? 'USD'),
     providerSpend: summarizeProviderSpend(costs),
+    providerCategorySpend: summarizeProviderCategorySpend(costs),
     repositories: summarizeRepositories(references),
     costs,
     revenue,
@@ -85,6 +94,81 @@ function summarizeProviderSpend(costs: CostEntry[]): ProviderSpendSummary[] {
   return [...groups.values()]
     .map((item) => ({ ...item, cost: roundMoney(item.cost) }))
     .sort((a, b) => b.cost - a.cost || a.provider.localeCompare(b.provider))
+}
+
+function summarizeProviderCategorySpend(costs: CostEntry[]): ProviderCategorySpendSummary[] {
+  const groups = new Map<string, ProviderCategorySpendSummary>()
+  for (const cost of costs) {
+    const category = cost.category ?? cost.lineItem ?? cost.usageMetric ?? 'unallocated'
+    const key = `${cost.provider}:${category}:${cost.currency}`
+    const existing = groups.get(key) ?? { provider: cost.provider, category, currency: cost.currency, cost: 0 }
+    existing.cost += cost.amount
+    groups.set(key, existing)
+  }
+
+  return [...groups.values()]
+    .map((item) => ({ ...item, cost: roundMoney(item.cost) }))
+    .sort((a, b) => b.cost - a.cost || a.provider.localeCompare(b.provider) || a.category.localeCompare(b.category))
+}
+
+function summarizeProfitabilityTrend(
+  costs: CostEntry[],
+  revenue: RevenueEntry[],
+  defaultCurrency: string,
+): ProfitabilityTrendPoint[] {
+  const groups = new Map<string, ProfitabilityTrendPoint>()
+
+  for (const entry of costs) {
+    const period = entry.startTime.slice(0, 7)
+    const group = ensureTrendGroup(groups, period, entry.currency || defaultCurrency)
+    group.cost += entry.amount
+  }
+
+  for (const entry of revenue) {
+    const period = entry.bookedAt.slice(0, 7)
+    const group = ensureTrendGroup(groups, period, entry.currency || defaultCurrency)
+    group.revenue += entry.amount
+  }
+
+  return [...groups.values()]
+    .map((group) => finalizeTrendGroup(group))
+    .sort((a, b) => a.period.localeCompare(b.period) || a.currency.localeCompare(b.currency))
+}
+
+function ensureTrendGroup(
+  groups: Map<string, ProfitabilityTrendPoint>,
+  period: string,
+  currency: string,
+): ProfitabilityTrendPoint {
+  const key = `${period}:${currency}`
+  const existing = groups.get(key)
+  if (existing) return existing
+
+  const created: ProfitabilityTrendPoint = {
+    period,
+    currency,
+    revenue: 0,
+    cost: 0,
+    grossProfit: 0,
+    roi: null,
+    breakEven: false,
+  }
+  groups.set(key, created)
+  return created
+}
+
+function finalizeTrendGroup(group: ProfitabilityTrendPoint): ProfitabilityTrendPoint {
+  const revenue = roundMoney(group.revenue)
+  const cost = roundMoney(group.cost)
+  const grossProfit = roundMoney(revenue - cost)
+  return {
+    ...group,
+    revenue,
+    cost,
+    grossProfit,
+    roi: cost === 0 ? null : roundMoney(grossProfit / cost),
+    breakEven: grossProfit >= 0,
+  }
 }
 
 function summarizeRepositories(references: ProductDashboardSummary['repositories'][number]['references']): RepositoryInventorySummary[] {

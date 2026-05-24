@@ -8,18 +8,39 @@ describe('dashboard model', () => {
 
     expect(dashboard.companySummary[0]).toEqual(expect.objectContaining({
       companyId: 'chekusu',
-      revenue: 1015,
-      cost: 362.66,
-      grossProfit: 652.34,
+      revenue: 5239,
+      cost: 1497.06,
+      grossProfit: 3741.94,
       breakEven: true,
     }))
     expect(dashboard.providerSpend).toEqual(expect.arrayContaining([
-      expect.objectContaining({ provider: 'openai', cost: 184.22 }),
-      expect.objectContaining({ provider: 'openrouter', cost: 72.44 }),
-      expect.objectContaining({ provider: 'stripe', cost: 64.5 }),
+      expect.objectContaining({ provider: 'openai', cost: 697.22 }),
+      expect.objectContaining({ provider: 'openrouter', cost: 271.54 }),
+      expect.objectContaining({ provider: 'stripe', cost: 250.8 }),
     ]))
+    expect(dashboard.profitabilityTrend).toHaveLength(5)
+    expect(dashboard.profitabilityTrend.at(-1)).toEqual(expect.objectContaining({
+      period: '2026-05',
+      revenue: 1335,
+      cost: 390.66,
+      grossProfit: 944.34,
+      breakEven: true,
+    }))
+    expect(dashboard.providerCategorySpend).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: 'openai', category: 'text-models', cost: 697.22 }),
+      expect.objectContaining({ provider: 'database', category: 'transaction-storage', cost: 55.25 }),
+    ]))
+    expect(dashboard.products.every((product) => product.profitabilityTrend.length === 5)).toBe(true)
+    expect(dashboard.products.every((product) => product.providerCategorySpend.length > 0)).toBe(true)
     expect(dashboard.products.find((product) => product.productId === 'agent-matrix')).toEqual(expect.objectContaining({
       name: 'Agent Matrix',
+      owner: 'Platform AI',
+      profitabilityTrend: expect.arrayContaining([
+        expect.objectContaining({ period: '2026-05', revenue: 155, cost: 82.44 }),
+      ]),
+      providerCategorySpend: expect.arrayContaining([
+        expect.objectContaining({ provider: 'openrouter', category: 'agent-inference' }),
+      ]),
       repositories: expect.arrayContaining([
         expect.objectContaining({
           repo: 'chekusu/codeben',

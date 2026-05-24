@@ -28,6 +28,7 @@ export function estimateCostsFromUsage(
       startTime: item.startTime,
       endTime: item.endTime,
       source: options.source ?? `cost-model:${model.id}`,
+      category: model.service,
       usageMetric: item.metric,
       providerProjectId: item.providerProjectId,
       lineItem: model.service,

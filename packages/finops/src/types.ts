@@ -47,6 +47,9 @@ export interface CompanyConfig {
 export interface ProductConfig {
   id: string
   name?: string
+  description?: string
+  owner?: string
+  lifecycle?: string
   companyId?: string
   repositories?: string[]
   repositoryGlobs?: string[]
@@ -113,6 +116,7 @@ export interface CostEntry {
   startTime: string
   endTime: string
   source: string
+  category?: string | null
   usageMetric?: string
   providerProjectId?: string | null
   lineItem?: string | null
@@ -230,6 +234,20 @@ export interface ProviderSpendSummary {
   cost: number
 }
 
+export interface ProviderCategorySpendSummary extends ProviderSpendSummary {
+  category: string
+}
+
+export interface ProfitabilityTrendPoint {
+  period: string
+  currency: string
+  revenue: number
+  cost: number
+  grossProfit: number
+  roi: number | null
+  breakEven: boolean
+}
+
 export interface RepositoryInventorySummary {
   repo: string
   repoPath: string
@@ -239,8 +257,13 @@ export interface RepositoryInventorySummary {
 export interface ProductDashboardSummary {
   productId: string
   name: string
+  description?: string
+  owner?: string
+  lifecycle?: string
   summary: AccountingSummary
+  profitabilityTrend: ProfitabilityTrendPoint[]
   providerSpend: ProviderSpendSummary[]
+  providerCategorySpend: ProviderCategorySpendSummary[]
   repositories: RepositoryInventorySummary[]
   costs: CostEntry[]
   revenue: RevenueEntry[]
@@ -266,7 +289,9 @@ export interface FinopsDashboardData {
   company: CompanyConfig
   products: ProductDashboardSummary[]
   companySummary: AccountingSummary[]
+  profitabilityTrend: ProfitabilityTrendPoint[]
   providerSpend: ProviderSpendSummary[]
+  providerCategorySpend: ProviderCategorySpendSummary[]
   ledgerRows: SourceLedgerRow[]
   inventory: ApiKeyInventory
   pricing: ProviderPricingRegistry
