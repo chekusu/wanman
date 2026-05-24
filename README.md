@@ -18,6 +18,7 @@ The name wanman comes from the Japanese [ワンマン電車 / one-man train](htt
 - Runs each agent as a real Claude Code or Codex CLI subprocess — you bring your own CLI auth, wanman orchestrates spawning, prompting, and lifecycle.
 - Isolates every agent in a per-agent worktree and per-agent `$HOME`, so agents never mutate your dirty checkout or shell profile.
 - Is CLI-first: everything is scriptable, observable, and reproducible through `wanman` commands and a JSON-RPC supervisor.
+- Includes an experimental `@wanman/finops` toolkit for API credential inventory, provider cost sync, Stripe revenue sync, and product/company ROI summaries.
 
 [wanman.ai](https://wanman.ai/) adds hosted-only capabilities:
 - Isolates each agent runtime group in its own sandbox environment, supporting large-scale, high-concurrency task execution.
@@ -48,6 +49,8 @@ node packages/cli/dist/wanman.mjs takeover /path/to/any/git/repo
 If `wanman` is already on your `PATH`, you can also run `wanman takeover .` from inside the target repository.
 
 See [`docs/quickstart.md`](docs/quickstart.md) for the full walkthrough.
+
+For cost and revenue accounting, see [`docs/finops.md`](docs/finops.md). The local FinOps review app runs with `pnpm --filter @wanman/finops dev -- --host 127.0.0.1 --port 4173`.
 
 ## CLI commands
 

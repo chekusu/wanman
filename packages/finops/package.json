@@ -1,0 +1,27 @@
+{
+  "name": "@wanman/finops",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "wanman-finops": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "cli": "tsx src/cli.ts",
+    "dev": "tsx src/web/dev-server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  }
+}
