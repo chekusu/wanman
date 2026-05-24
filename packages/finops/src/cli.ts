@@ -5,11 +5,12 @@ import {
   fetchOpenAiUsageEntries,
   fetchStripeLedgerEntries,
   refreshProviderPricing,
+  buildRuntimeDashboardFile,
   scanApiKeyInventory,
   summarizeFinops,
   writeInventoryFile,
 } from './index.js'
-import type { CostEntry, FinopsConfig, RevenueEntry } from './types.js'
+import type { ApiKeyInventory, CostEntry, FinopsConfig, ProviderPricingRegistry, RevenueEntry, UsageEntry } from './types.js'
 
 export const HELP = `wanman-finops - cost, revenue, and API-key inventory tools
 
@@ -20,6 +21,7 @@ Usage:
   wanman-finops stripe-ledger --start <yyyy-mm-dd> [--end <yyyy-mm-dd>] [--company <id>] [--out <file>]
   wanman-finops refresh-prices [--out <file>] [--limit <n>] [--no-openai] [--no-openrouter]
   wanman-finops roi --costs <file[,file]> --revenue <file[,file]> [--company <id>] [--out <file>]
+  wanman-finops dashboard --inventory <file> [--costs <file[,file]>] [--revenue <file[,file]>] [--usage <file[,file]>] [--pricing <file>] [--company <id>] [--company-name <name>] [--out <file>]
 
 Credential env vars:
   OPENAI_ADMIN_KEY    Used only by openai-costs/openai-usage.
@@ -45,6 +47,9 @@ export async function run(command: string | undefined, args: string[]): Promise<
       break
     case 'roi':
       await roiCommand(args)
+      break
+    case 'dashboard':
+      await dashboardCommand(args)
       break
     case 'help':
     case '--help':
@@ -137,6 +142,36 @@ async function roiCommand(args: string[]): Promise<void> {
   await writeOrPrint(summary, flag(args, '--out'))
 }
 
+async function dashboardCommand(args: string[]): Promise<void> {
+  const inventoryPath = flag(args, '--inventory')
+  if (!inventoryPath) throw new Error('Missing --inventory')
+
+  const inventory = await readJsonFile<ApiKeyInventory>(inventoryPath)
+  const costs = flag(args, '--costs') ? await readCostEntries(flag(args, '--costs')) : []
+  const revenue = flag(args, '--revenue') ? await readRevenueEntries(flag(args, '--revenue')) : []
+  const usage = flag(args, '--usage') ? await readUsageEntries(flag(args, '--usage')) : []
+  const pricing = flag(args, '--pricing') ? await readJsonFile<ProviderPricingRegistry>(flag(args, '--pricing')!) : undefined
+  const warnings: string[] = []
+  if (!costs.length) warnings.push('No provider cost rows were loaded. Configure provider admin/master credentials to sync billable usage.')
+  if (!revenue.length) warnings.push('No revenue rows were loaded. Configure Stripe or another revenue ledger to calculate ROI.')
+
+  const dashboard = buildRuntimeDashboardFile({
+    company: {
+      id: flag(args, '--company') ?? inventory.companyId,
+      name: flag(args, '--company-name') ?? 'Chekusu',
+      baseCurrency: flag(args, '--base-currency') ?? 'USD',
+    },
+    inventory,
+    costs,
+    revenue,
+    usage,
+    pricing,
+    warnings,
+  })
+
+  await writeOrPrint(dashboard, flag(args, '--out'))
+}
+
 async function readOptionalConfig(configPath: string | undefined): Promise<FinopsConfig | undefined> {
   if (!configPath) return undefined
   const content = await fs.readFile(configPath, 'utf8')
@@ -174,6 +209,21 @@ async function readRevenueEntries(input: string | undefined): Promise<RevenueEnt
     else if (isObject(parsed) && Array.isArray(parsed['revenue'])) entries.push(...parsed['revenue'] as RevenueEntry[])
   }
   return entries
+}
+
+async function readUsageEntries(input: string | undefined): Promise<UsageEntry[]> {
+  if (!input) throw new Error('Missing --usage')
+  const entries: UsageEntry[] = []
+  for (const file of input.split(',').map((item) => item.trim()).filter(Boolean)) {
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as unknown
+    if (Array.isArray(parsed)) entries.push(...parsed as UsageEntry[])
+    else if (isObject(parsed) && Array.isArray(parsed['usage'])) entries.push(...parsed['usage'] as UsageEntry[])
+  }
+  return entries
+}
+
+async function readJsonFile<T>(file: string): Promise<T> {
+  return JSON.parse(await fs.readFile(file, 'utf8')) as T
 }
 
 function flag(args: string[], name: string): string | undefined {

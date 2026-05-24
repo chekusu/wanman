@@ -54,6 +54,9 @@ async function buildWeb(): Promise<void> {
   })
   await fs.copyFile(path.join(packageRoot, 'src/web/index.html'), path.join(outDir, 'index.html'))
   await fs.copyFile(path.join(packageRoot, 'src/web/styles.css'), path.join(outDir, 'styles.css'))
+  if (process.env.WANMAN_FINOPS_RUNTIME_DATA) {
+    await fs.copyFile(process.env.WANMAN_FINOPS_RUNTIME_DATA, path.join(outDir, 'runtime-data.json'))
+  }
 }
 
 function safeJoin(root: string, pathname: string): string | null {
@@ -70,6 +73,8 @@ function contentType(filePath: string): string {
       return 'text/css; charset=utf-8'
     case '.js':
       return 'text/javascript; charset=utf-8'
+    case '.json':
+      return 'application/json; charset=utf-8'
     case '.map':
       return 'application/json; charset=utf-8'
     default:

@@ -47,5 +47,8 @@ await build({
 
 await fs.copyFile('src/web/index.html', 'dist/web/index.html');
 await fs.copyFile('src/web/styles.css', 'dist/web/styles.css');
+if (process.env.WANMAN_FINOPS_RUNTIME_DATA) {
+  await fs.copyFile(process.env.WANMAN_FINOPS_RUNTIME_DATA, 'dist/web/runtime-data.json');
+}
 
 console.log('Build complete: dist/web');

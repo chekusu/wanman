@@ -12,6 +12,7 @@ import type {
   ApiKeyReference,
   CompanyApiKeySummary,
   FinopsConfig,
+  InventoryRepository,
   InventoryEvidenceKind,
   ProductApiKeySummary,
   ProductConfig,
@@ -85,16 +86,59 @@ const TEXT_EXTENSIONS = new Set([
 ])
 
 const IGNORE_ENV_VARS = new Set([
+  'API',
+  'API_BASE',
+  'API_BASE_URL',
+  'API_KEY',
+  'API_KEY_FLAG',
+  'API_SECRET',
+  'API_URL',
+  'EXAMPLE_API_KEY',
+  'GITHUB_API',
+  'INVALID_TOKEN',
+  'KEY',
+  'MY_API_KEY',
+  'NO_TOKEN',
+  'SECRET',
+  'TOKEN',
+  'YOUR_API_KEY',
   'FOREIGN_KEY',
   'PRIMARY_KEY',
   'UNIQUE_KEY',
 ])
+
+const NON_CREDENTIAL_SUFFIXES = [
+  '_ACCOUNT_ID',
+  '_API_URL',
+  '_BASE',
+  '_BASE_URL',
+  '_CLIENT_ID',
+  '_ENDPOINT',
+  '_EXPIRY_SECONDS',
+  '_EXPIRE_MINUTES',
+  '_FILE',
+  '_HOST',
+  '_MAX_CPU',
+  '_MAX_DISK_GB',
+  '_MAX_MEMORY_MB',
+  '_ORIGIN',
+  '_PID',
+  '_PROJECT_ID',
+  '_PUBLISHABLE_KEY',
+  '_PUBLIC_KEY',
+  '_TEAM_ID',
+  '_URI',
+  '_URL',
+  '_VALUE',
+  '_VERSION',
+]
 
 export async function scanApiKeyInventory(options: InventoryScanOptions): Promise<ApiKeyInventory> {
   const root = path.resolve(options.root)
   const companyId = options.config?.company.id ?? options.companyId ?? path.basename(root)
   const repos = await findRepositories(root)
   const drafts: ApiKeyReference[] = []
+  const repositorySummaries: InventoryRepository[] = []
 
   for (const repo of repos) {
     const product = resolveProduct(repo.repo, options.config?.products)
@@ -154,7 +198,15 @@ export async function scanApiKeyInventory(options: InventoryScanOptions): Promis
         secretIncluded: false,
       })
     }
-    drafts.push(...perRepo.values())
+    const repoReferences = [...perRepo.values()]
+    drafts.push(...repoReferences)
+    repositorySummaries.push({
+      repo: repo.repo,
+      repoPath: repo.repoPath,
+      productId: product.id,
+      companyId: product.companyId ?? companyId,
+      keyCount: repoReferences.length,
+    })
   }
 
   drafts.sort((a, b) => {
@@ -170,6 +222,7 @@ export async function scanApiKeyInventory(options: InventoryScanOptions): Promis
     root,
     companyId,
     reposScanned: repos.length,
+    repositories: repositorySummaries.sort((a, b) => a.repo.localeCompare(b.repo)),
     references: drafts,
     byProduct: summarizeByProduct(drafts),
     byCompany: summarizeByCompany(drafts),
@@ -339,7 +392,9 @@ function shouldScanFile(filePath: string, repoPath: string, includeLocalEnvFiles
 
 function isRelevantCredentialName(envVar: string): boolean {
   if (IGNORE_ENV_VARS.has(envVar)) return false
-  return /(API|KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE_URL|POSTGRES_URL|REDIS_URL|DSN|WEBHOOK|STRIPE|OPENAI|ANTHROPIC|CLAUDE|GITHUB|CLOUDFLARE|SUPABASE|RESEND|SENDGRID|AWS|GOOGLE|SLACK|LINE|DISCORD|SENTRY|TWILIO|VERCEL)/.test(envVar)
+  if (NON_CREDENTIAL_SUFFIXES.some((suffix) => envVar.endsWith(suffix))) return false
+  if (/^(VITE|EXPO_PUBLIC|NEXT_PUBLIC|PUBLIC)_/.test(envVar)) return false
+  return /(API_KEY|SECRET_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN|PRIVATE_KEY|SERVICE_ROLE_KEY|WEBHOOK_SECRET|PASSWORD|CREDENTIAL|DATABASE_URL|POSTGRES_URL|REDIS_URL|DSN|STRIPE|OPENAI|OPENROUTER|ANTHROPIC|CLAUDE|GITHUB|CLOUDFLARE|SUPABASE|RESEND|SENDGRID|AWS|GOOGLE|GEMINI|SLACK|LINE|DISCORD|SENTRY|TWILIO|VERCEL)/.test(envVar)
 }
 
 function repoTargetForPath(repoPath: string): RepoTarget {

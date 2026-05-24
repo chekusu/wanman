@@ -1,5 +1,6 @@
 import { roundMoney } from './money.js'
 import { summarizeFinops } from './ledger.js'
+import { usageCapabilitiesForProviders } from './usage-capabilities.js'
 import type {
   AccountingSummary,
   ApiKeyInventory,
@@ -12,6 +13,7 @@ import type {
   ProviderCategorySpendSummary,
   ProviderName,
   ProviderPricingRegistry,
+  ProviderUsageCapability,
   ProviderSpendSummary,
   RepositoryInventorySummary,
   RevenueEntry,
@@ -27,6 +29,7 @@ export interface BuildFinopsDashboardOptions {
   revenue: RevenueEntry[]
   usage: UsageEntry[]
   pricing: ProviderPricingRegistry
+  usageCapabilities?: ProviderUsageCapability[]
   generatedAt?: string
 }
 
@@ -51,6 +54,7 @@ export function buildFinopsDashboardData(options: BuildFinopsDashboardOptions): 
     ledgerRows: buildLedgerRows(options.costs, options.revenue, options.usage),
     inventory: options.inventory,
     pricing: options.pricing,
+    usageCapabilities: options.usageCapabilities ?? usageCapabilitiesForProviders(providersInDataset(options)),
   }
 }
 
@@ -64,6 +68,7 @@ function productDashboard(
   const revenue = options.revenue.filter((entry) => entry.productId === productId)
   const usage = options.usage.filter((entry) => entry.productId === productId)
   const references = options.inventory.references.filter((ref) => ref.productId === productId)
+  const inventoryRepositories = options.inventory.repositories.filter((repo) => repo.productId === productId)
 
   return {
     productId,
@@ -75,7 +80,7 @@ function productDashboard(
     profitabilityTrend: summarizeProfitabilityTrend(costs, revenue, options.company.baseCurrency ?? 'USD'),
     providerSpend: summarizeProviderSpend(costs),
     providerCategorySpend: summarizeProviderCategorySpend(costs),
-    repositories: summarizeRepositories(references),
+    repositories: summarizeRepositories(references, inventoryRepositories),
     costs,
     revenue,
     usage,
@@ -171,8 +176,14 @@ function finalizeTrendGroup(group: ProfitabilityTrendPoint): ProfitabilityTrendP
   }
 }
 
-function summarizeRepositories(references: ProductDashboardSummary['repositories'][number]['references']): RepositoryInventorySummary[] {
+function summarizeRepositories(
+  references: ProductDashboardSummary['repositories'][number]['references'],
+  repositories: ApiKeyInventory['repositories'] = [],
+): RepositoryInventorySummary[] {
   const groups = new Map<string, RepositoryInventorySummary>()
+  for (const repo of repositories) {
+    groups.set(repo.repo, { repo: repo.repo, repoPath: repo.repoPath, references: [] })
+  }
   for (const ref of references) {
     const existing = groups.get(ref.repo) ?? { repo: ref.repo, repoPath: ref.repoPath, references: [] }
     existing.references.push(ref)
@@ -240,4 +251,13 @@ function emptySummary(companyId: string, productId: string, currency: string): A
 
 function uniqueStrings(items: string[]): string[] {
   return [...new Set(items)].sort()
+}
+
+function providersInDataset(options: BuildFinopsDashboardOptions): ProviderName[] {
+  return [
+    ...options.inventory.references.map((ref) => ref.provider),
+    ...options.costs.map((cost) => cost.provider),
+    ...options.revenue.map((entry) => entry.provider),
+    ...options.usage.map((entry) => entry.provider),
+  ]
 }

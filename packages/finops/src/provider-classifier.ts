@@ -7,7 +7,7 @@ const PROVIDER_RULES: Array<[ProviderName, RegExp]> = [
   ['anthropic', /ANTHROPIC|CLAUDE/],
   ['stripe', /STRIPE/],
   ['github', /GITHUB|^GH_/],
-  ['cloudflare', /CLOUDFLARE|^CF_|^R2_|WORKERS_/],
+  ['cloudflare', /CLOUDFLARE|^CF_|^R2_|WORKERS_|TURNSTILE/],
   ['supabase', /SUPABASE/],
   ['resend', /RESEND/],
   ['sendgrid', /SENDGRID/],

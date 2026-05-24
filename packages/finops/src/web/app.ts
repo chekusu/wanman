@@ -5,15 +5,40 @@ import { parseFinopsRoute, routeToHash, type FinopsRoute } from './routing.js'
 import type {
   AccountingSummary,
   ApiKeyReference,
+  FinopsDashboardData,
   ProductDashboardSummary,
   ProfitabilityTrendPoint,
   ProviderCategorySpendSummary,
   ProviderPricingEntry,
+  ProviderUsageCapability,
   ProviderSpendSummary,
   SourceLedgerRow,
 } from '../types.js'
 
-const dashboard = buildFinopsDashboardData(demoWorkspaceInput)
+type RuntimeDataSource = {
+  mode: 'demo' | 'real'
+  generatedAt: string
+  reposScanned: number
+  credentialReferences: number
+  costRows: number
+  revenueRows: number
+  usageRows: number
+  secretValuesIncluded: false
+  warnings: string[]
+}
+
+let dashboard = buildFinopsDashboardData(demoWorkspaceInput)
+let dataSource: RuntimeDataSource = {
+  mode: 'demo',
+  generatedAt: dashboard.generatedAt,
+  reposScanned: dashboard.inventory.reposScanned,
+  credentialReferences: dashboard.inventory.references.length,
+  costRows: dashboard.ledgerRows.filter((row) => row.kind === 'cost').length,
+  revenueRows: dashboard.ledgerRows.filter((row) => row.kind === 'revenue').length,
+  usageRows: dashboard.ledgerRows.filter((row) => row.kind === 'usage').length,
+  secretValuesIncluded: false,
+  warnings: ['Using bundled demo fallback because runtime-data.json has not been loaded.'],
+}
 const appRoot = document.querySelector<HTMLDivElement>('#app')
 
 if (!appRoot) {
@@ -51,6 +76,25 @@ root.addEventListener('click', (event) => {
 })
 
 render()
+void loadRuntimeData()
+
+async function loadRuntimeData(): Promise<void> {
+  try {
+    const response = await fetch('./runtime-data.json', { cache: 'no-store' })
+    if (!response.ok) return
+    const parsed = await response.json() as unknown
+    const runtime = parseRuntimeData(parsed)
+    if (!runtime) return
+    dashboard = runtime.dashboard
+    dataSource = runtime.dataSource
+    route = normalizeRoute(parseFinopsRoute(window.location.hash))
+    selectedRepo = ''
+    selectedEnvVar = ''
+    render()
+  } catch {
+    // Demo fallback is intentional when a local runtime data file is not present.
+  }
+}
 
 function render(): void {
   const summary = dashboard.companySummary[0] ?? emptySummary()
@@ -66,8 +110,8 @@ function render(): void {
           <h1>${escapeHtml(dashboard.company.name ?? dashboard.company.id)}</h1>
         </div>
         <div class="status-pill">
-          <span>Sanitized demo data</span>
-          <strong>${dashboard.inventory.references.length} credential refs / no key values</strong>
+          <span>${dataSource.mode === 'real' ? 'Real private inventory' : 'Sanitized demo data'}</span>
+          <strong>${dashboard.inventory.references.length} refs / ${dashboard.inventory.reposScanned} repos / no key values</strong>
         </div>
         <nav class="view-nav" aria-label="FinOps views">
           <a class="nav-item${route.view === 'home' ? ' is-active' : ''}" href="${routeToHash({ view: 'home' })}"${route.view === 'home' ? ' aria-current="page"' : ''}>
@@ -85,8 +129,8 @@ function render(): void {
           }).join('')}
         </nav>
         <div class="sidebar-note">
-          <small>Pricing feeds</small>
-          <strong>${dashboard.pricing.sources.filter((source) => source.ok).length}/${dashboard.pricing.sources.length} healthy</strong>
+          <small>Data coverage</small>
+          <strong>${dataSource.costRows} costs / ${dataSource.revenueRows} revenue / ${dataSource.usageRows} usage</strong>
         </div>
       </aside>
       <div class="workspace">
@@ -112,9 +156,13 @@ function render(): void {
 }
 
 function homeView(summary: AccountingSummary): string {
+  const revenueHelper = dataSource.mode === 'real' ? 'Synced revenue ledger' : 'Stripe demo ledger'
+
   return `
+    ${dataWarnings()}
+
     <section class="metric-grid" aria-label="Company summary">
-      ${metricCard('Revenue', formatMoney(summary.revenue, summary.currency), 'Stripe demo ledger')}
+      ${metricCard('Revenue', formatMoney(summary.revenue, summary.currency), revenueHelper)}
       ${metricCard('Cost', formatMoney(summary.cost, summary.currency), 'Provider spend')}
       ${metricCard('Gross profit', formatMoney(summary.grossProfit, summary.currency), summary.breakEven ? 'Break-even met' : 'Below break-even')}
       ${metricCard('ROI', formatRoi(summary.roi), 'Gross profit / cost')}
@@ -159,18 +207,33 @@ function homeView(summary: AccountingSummary): string {
         ${providerSpendList(dashboard.providerSpend)}
       </article>
     </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Usage and Billing Access</h2>
+        <span>${dashboard.usageCapabilities.length} provider models</span>
+      </div>
+      ${capabilityTable(dashboard.usageCapabilities)}
+    </section>
   `
 }
 
 function projectView(product: ProductDashboardSummary): string {
   const repo = selectedRepository(product)
   const credential = selectedCredential(repo?.references ?? [])
-  const selectedProviders = new Set(product.providerSpend.map((item) => item.provider))
+  const selectedProviders = new Set([
+    ...product.providerSpend.map((item) => item.provider),
+    ...product.repositories.flatMap((item) => item.references.map((ref) => ref.provider)),
+  ])
   const pricingRows = dashboard.pricing.entries
     .filter((entry) => selectedProviders.has(entry.provider))
     .slice(0, 16)
+  const projectCapabilities = dashboard.usageCapabilities.filter((item) => selectedProviders.has(item.provider))
+  const revenueHelper = dataSource.mode === 'real' ? 'Synced revenue ledger' : 'Demo Stripe ledger'
 
   return `
+    ${dataWarnings()}
+
     <section class="project-heading">
       <div>
         <p class="eyebrow"><a href="${routeToHash({ view: 'home' })}">Dashboard</a> / Project View</p>
@@ -185,7 +248,7 @@ function projectView(product: ProductDashboardSummary): string {
     </section>
 
     <section class="metric-grid" aria-label="Project summary">
-      ${metricCard('Revenue', formatMoney(product.summary.revenue, product.summary.currency), 'Demo Stripe ledger')}
+      ${metricCard('Revenue', formatMoney(product.summary.revenue, product.summary.currency), revenueHelper)}
       ${metricCard('Cost', formatMoney(product.summary.cost, product.summary.currency), 'Mapped providers')}
       ${metricCard('Gross profit', formatMoney(product.summary.grossProfit, product.summary.currency), product.summary.breakEven ? 'Break-even met' : 'Below break-even')}
       ${metricCard('ROI', formatRoi(product.summary.roi), 'Gross profit / cost')}
@@ -249,6 +312,14 @@ function projectView(product: ProductDashboardSummary): string {
         <span>${dashboard.pricing.sources.filter((source) => source.ok).length}/${dashboard.pricing.sources.length} sources healthy</span>
       </div>
       ${pricingTable(pricingRows.length ? pricingRows : dashboard.pricing.entries.slice(0, 16))}
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Usage Sync Requirements</h2>
+        <span>${projectCapabilities.length} providers in project</span>
+      </div>
+      ${capabilityTable(projectCapabilities)}
     </section>
   `
 }
@@ -514,6 +585,7 @@ function ledgerTable(rows: SourceLedgerRow[]): string {
 }
 
 function pricingTable(rows: ProviderPricingEntry[]): string {
+  if (!rows.length) return emptyState('No pricing rows')
   return `
     <div class="table-wrap">
       <table>
@@ -543,6 +615,52 @@ function pricingTable(rows: ProviderPricingEntry[]): string {
         </tbody>
       </table>
     </div>
+  `
+}
+
+function capabilityTable(rows: ProviderUsageCapability[]): string {
+  if (!rows.length) return emptyState('No provider usage requirements')
+  return `
+    <div class="table-wrap">
+      <table class="capability-table">
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Usage API</th>
+            <th>Billing API</th>
+            <th>Master key / role</th>
+            <th>Attribution</th>
+            <th>Cadence</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td><strong>${escapeHtml(row.displayName)}</strong><small>${escapeHtml(row.provider)}</small></td>
+              <td><span class="status-badge status-${escapeAttr(row.status)}">${escapeHtml(capabilityStatusLabel(row.status))}</span></td>
+              <td>${escapeHtml(row.usageApi)}</td>
+              <td>${escapeHtml(row.billingApi)}</td>
+              <td>${escapeHtml(row.masterCredential)}</td>
+              <td>${escapeHtml(row.attribution)}</td>
+              <td>${escapeHtml(row.cadence)}</td>
+              <td>${row.sourceUrl ? `<a href="${escapeAttr(row.sourceUrl)}" target="_blank" rel="noreferrer">docs</a>` : '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function dataWarnings(): string {
+  if (!dataSource.warnings.length) return ''
+  return `
+    <section class="data-warning" aria-label="Data sync warnings">
+      <strong>${dataSource.mode === 'real' ? 'Runtime data is real inventory only' : 'Demo fallback active'}</strong>
+      <span>${escapeHtml(dataSource.warnings.join(' '))}</span>
+    </section>
   `
 }
 
@@ -625,6 +743,62 @@ function formatPeriod(period: string): string {
 
 function emptyState(label: string): string {
   return `<div class="empty">${escapeHtml(label)}</div>`
+}
+
+function capabilityStatusLabel(status: ProviderUsageCapability['status']): string {
+  switch (status) {
+    case 'available':
+      return 'API available'
+    case 'limited':
+      return 'Partial'
+    case 'requires-export':
+      return 'Export required'
+    case 'not-available':
+      return 'No billing API'
+    case 'unknown':
+      return 'Unknown'
+  }
+}
+
+function parseRuntimeData(value: unknown): { dashboard: FinopsDashboardData, dataSource: RuntimeDataSource } | null {
+  if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.dashboard) || !isRecord(value.dataSource)) {
+    return null
+  }
+
+  const parsedDashboard = value.dashboard as unknown as FinopsDashboardData
+  const parsedSource = value.dataSource
+  if (
+    !Array.isArray(parsedDashboard.products)
+    || !Array.isArray(parsedDashboard.inventory?.references)
+    || !Array.isArray(parsedDashboard.ledgerRows)
+  ) {
+    return null
+  }
+
+  return {
+    dashboard: parsedDashboard,
+    dataSource: {
+      mode: parsedSource.mode === 'real' ? 'real' : 'demo',
+      generatedAt: typeof parsedSource.generatedAt === 'string' ? parsedSource.generatedAt : parsedDashboard.generatedAt,
+      reposScanned: numberOr(parsedSource.reposScanned, parsedDashboard.inventory.reposScanned),
+      credentialReferences: numberOr(parsedSource.credentialReferences, parsedDashboard.inventory.references.length),
+      costRows: numberOr(parsedSource.costRows, parsedDashboard.ledgerRows.filter((row) => row.kind === 'cost').length),
+      revenueRows: numberOr(parsedSource.revenueRows, parsedDashboard.ledgerRows.filter((row) => row.kind === 'revenue').length),
+      usageRows: numberOr(parsedSource.usageRows, parsedDashboard.ledgerRows.filter((row) => row.kind === 'usage').length),
+      secretValuesIncluded: false,
+      warnings: Array.isArray(parsedSource.warnings)
+        ? parsedSource.warnings.filter((item): item is string => typeof item === 'string')
+        : [],
+    },
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
 function escapeHtml(value: string): string {

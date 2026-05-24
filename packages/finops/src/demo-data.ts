@@ -58,6 +58,13 @@ export const demoInventory: ApiKeyInventory = {
   root: 'demo://chekusu',
   companyId,
   reposScanned: 5,
+  repositories: [
+    inventoryRepo('chekusu/codeben', 'agent-matrix', 1),
+    inventoryRepo('chekusu/wanman', 'agent-matrix', 1),
+    inventoryRepo('chekusu/shipkey', 'payments', 1),
+    inventoryRepo('chekusu/cloud.sandbank.dev', 'sandbank-cloud', 2),
+    inventoryRepo('chekusu/wanman.ai', 'wanman-cloud', 2),
+  ],
   references: [
     credential('chekusu/codeben', 'agent-matrix', 'OPENAI_API_KEY', 'openai', 'openrouter', [
       evidence('env-access', 'src/providers/openrouter.ts', 'process.env.OPENAI_API_KEY'),
@@ -205,6 +212,16 @@ function evidence(
   provider?: ProviderName,
 ): ApiKeyProviderEvidence {
   return { kind, sourceFile, value, provider }
+}
+
+function inventoryRepo(repo: string, productId: string, keyCount: number): ApiKeyInventory['repositories'][number] {
+  return {
+    repo,
+    repoPath: `demo://${repo}`,
+    productId,
+    companyId,
+    keyCount,
+  }
 }
 
 function cost(

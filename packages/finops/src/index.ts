@@ -22,6 +22,15 @@ export {
   refreshProviderPricing,
 } from './pricing-registry.js'
 export type { RefreshProviderPricingOptions } from './pricing-registry.js'
+export {
+  DEFAULT_USAGE_CAPABILITIES,
+  usageCapabilitiesForProviders,
+} from './usage-capabilities.js'
+export {
+  buildRuntimeDashboardFile,
+  productsFromInventory,
+} from './runtime-data.js'
+export type { BuildRuntimeDashboardOptions, FinopsRuntimeDataFile } from './runtime-data.js'
 export { fetchOpenAiCostEntries, fetchOpenAiUsageEntries } from './providers/openai.js'
 export type { OpenAiSyncOptions, OpenAiUsageService, OpenAiUsageSyncOptions } from './providers/openai.js'
 export { fetchStripeLedgerEntries } from './providers/stripe.js'
@@ -48,6 +57,8 @@ export type {
   ProfitabilityTrendPoint,
   ProviderCategorySpendSummary,
   ProviderName,
+  ProviderUsageCapability,
+  ProviderUsageCapabilityStatus,
   ProviderPricingEntry,
   ProviderPricingRegistry,
   ProviderPricingSourceStatus,

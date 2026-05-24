@@ -22,6 +22,26 @@ export type ProviderName =
   | 'vercel'
   | 'unknown'
 
+export type ProviderUsageCapabilityStatus =
+  | 'available'
+  | 'limited'
+  | 'requires-export'
+  | 'not-available'
+  | 'unknown'
+
+export interface ProviderUsageCapability {
+  provider: ProviderName
+  displayName: string
+  status: ProviderUsageCapabilityStatus
+  usageApi: string
+  billingApi: string
+  masterCredential: string
+  attribution: string
+  cadence: string
+  sourceUrl: string
+  notes?: string
+}
+
 export type InventoryEvidenceKind =
   | 'assignment'
   | 'base-url'
@@ -76,11 +96,20 @@ export interface ApiKeyReference {
   secretIncluded: false
 }
 
+export interface InventoryRepository {
+  repo: string
+  repoPath: string
+  productId: string
+  companyId: string
+  keyCount: number
+}
+
 export interface ApiKeyInventory {
   generatedAt: string
   root: string
   companyId: string
   reposScanned: number
+  repositories: InventoryRepository[]
   references: ApiKeyReference[]
   byProduct: Record<string, ProductApiKeySummary>
   byCompany: Record<string, CompanyApiKeySummary>
@@ -295,4 +324,5 @@ export interface FinopsDashboardData {
   ledgerRows: SourceLedgerRow[]
   inventory: ApiKeyInventory
   pricing: ProviderPricingRegistry
+  usageCapabilities: ProviderUsageCapability[]
 }

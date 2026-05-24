@@ -56,6 +56,11 @@ describe('dashboard model', () => {
       expect.objectContaining({ kind: 'usage', source: 'openai:organization-usage' }),
     ]))
     expect(dashboard.pricing.entries.length).toBeGreaterThan(0)
+    expect(dashboard.usageCapabilities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: 'openai', status: 'available' }),
+      expect.objectContaining({ provider: 'openrouter', status: 'limited' }),
+      expect.objectContaining({ provider: 'stripe', status: 'available' }),
+    ]))
     expect(JSON.stringify(dashboard)).not.toContain('sk-')
     expect(dashboard.inventory.references.every((ref) => ref.repoPath.startsWith('demo://'))).toBe(true)
   })

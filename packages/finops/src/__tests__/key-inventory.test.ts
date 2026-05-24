@@ -28,10 +28,13 @@ describe('key inventory', () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wanman-finops-'))
     const owner = path.join(root, 'chekusu')
     const repo = path.join(owner, 'alpha')
+    const emptyRepo = path.join(owner, 'beta')
     await fs.mkdir(path.join(repo, '.git'), { recursive: true })
+    await fs.mkdir(path.join(emptyRepo, '.git'), { recursive: true })
     await fs.mkdir(path.join(repo, 'src'), { recursive: true })
-    await fs.writeFile(path.join(repo, '.env.example'), 'OPENAI_API_KEY=\nSTRIPE_SECRET_KEY=\n')
+    await fs.writeFile(path.join(repo, '.env.example'), 'OPENAI_API_KEY=\nSTRIPE_SECRET_KEY=\nVITE_API_URL=\nAPI_KEY=\n')
     await fs.writeFile(path.join(repo, 'src', 'index.ts'), 'process.env.RESEND_API_KEY\n')
+    await fs.writeFile(path.join(emptyRepo, 'README.md'), '# no credentials here\n')
 
     const inventory = await scanApiKeyInventory({
       root: owner,
@@ -42,8 +45,13 @@ describe('key inventory', () => {
       },
     })
 
-    expect(inventory.reposScanned).toBe(1)
+    expect(inventory.reposScanned).toBe(2)
+    expect(inventory.repositories).toEqual(expect.arrayContaining([
+      expect.objectContaining({ repo: 'chekusu/alpha', keyCount: 3 }),
+      expect.objectContaining({ repo: 'chekusu/beta', keyCount: 0 }),
+    ]))
     expect(inventory.references).toHaveLength(3)
+    expect(inventory.references.map((ref) => ref.envVar)).not.toEqual(expect.arrayContaining(['VITE_API_URL', 'API_KEY']))
     expect(inventory.references.every((ref) => ref.secretIncluded === false)).toBe(true)
     expect(inventory.byProduct['alpha-product']?.providers).toMatchObject({
       openai: 1,
