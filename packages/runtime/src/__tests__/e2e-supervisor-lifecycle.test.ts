@@ -72,11 +72,12 @@ import { Supervisor } from '../supervisor.js'
 import { LoopLogger } from '../loop-logger.js'
 import { Heartbeat } from '../heartbeat.js'
 
-const tmpDir = join(tmpdir(), `e2e-lifecycle-${Date.now()}`)
+const tmpDir = join(tmpdir(), `e2e-lifecycle-${process.pid}-${Date.now()}`)
 const ndjsonPath = join(tmpDir, 'loop-events.ndjson')
 const heartbeatPath = join(tmpDir, '.wanman', 'heartbeat.json')
 
 const config: AgentMatrixConfig = {
+  dbPath: join(tmpDir, 'wanman.db'),
   agents: [
     { name: 'ceo', lifecycle: '24/7' as const, model: 'claude-sonnet-4-6', systemPrompt: '' },
     { name: 'dev', lifecycle: 'on-demand' as const, model: 'claude-sonnet-4-6', systemPrompt: '' },
