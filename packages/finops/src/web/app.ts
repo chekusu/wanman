@@ -39,12 +39,6 @@ root.addEventListener('click', (event) => {
   if (!actionTarget) return
 
   const action = actionTarget.dataset.action
-  if (action === 'navigate-home') {
-    navigate({ view: 'home' })
-  }
-  if (action === 'select-product') {
-    navigate({ view: 'project', productId: actionTarget.dataset.productId ?? firstProductId() })
-  }
   if (action === 'select-repo') {
     selectedRepo = actionTarget.dataset.repo ?? selectedRepo
     selectedEnvVar = ''
@@ -61,27 +55,60 @@ render()
 function render(): void {
   const summary = dashboard.companySummary[0] ?? emptySummary()
   const product = selectedProduct()
+  const activeSummary = route.view === 'home' ? summary : product.summary
 
   root.innerHTML = `
-    <header class="topbar">
-      <div class="brand-block">
-        <p class="eyebrow">wanman FinOps</p>
-        <h1>${escapeHtml(dashboard.company.name ?? dashboard.company.id)}</h1>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <div class="app-frame">
+      <aside class="sidebar" aria-label="FinOps navigation">
+        <div class="brand-block">
+          <p class="eyebrow">wanman FinOps</p>
+          <h1>${escapeHtml(dashboard.company.name ?? dashboard.company.id)}</h1>
+        </div>
+        <div class="status-pill">
+          <span>Sanitized demo data</span>
+          <strong>${dashboard.inventory.references.length} credential refs / no key values</strong>
+        </div>
+        <nav class="view-nav" aria-label="FinOps views">
+          <a class="nav-item${route.view === 'home' ? ' is-active' : ''}" href="${routeToHash({ view: 'home' })}"${route.view === 'home' ? ' aria-current="page"' : ''}>
+            <span>Dashboard</span>
+            <small>Company rollup</small>
+          </a>
+          ${dashboard.products.map((item) => {
+            const active = route.view === 'project' && item.productId === product.productId
+            return `
+              <a class="nav-item${active ? ' is-active' : ''}" href="${routeToHash({ view: 'project', productId: item.productId })}"${active ? ' aria-current="page"' : ''}>
+                <span>${escapeHtml(item.name)}</span>
+                <small>${formatMoney(item.summary.grossProfit, item.summary.currency)} gross profit</small>
+              </a>
+            `
+          }).join('')}
+        </nav>
+        <div class="sidebar-note">
+          <small>Pricing feeds</small>
+          <strong>${dashboard.pricing.sources.filter((source) => source.ok).length}/${dashboard.pricing.sources.length} healthy</strong>
+        </div>
+      </aside>
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">${route.view === 'home' ? 'Company console' : 'Project console'}</p>
+            <h2>${route.view === 'home' ? 'Cost, revenue, and ROI control plane' : escapeHtml(product.name)}</h2>
+          </div>
+          <div class="topbar-metrics" aria-label="Current view totals">
+            <span><small>Revenue</small><strong>${formatMoney(activeSummary.revenue, activeSummary.currency)}</strong></span>
+            <span><small>Cost</small><strong>${formatMoney(activeSummary.cost, activeSummary.currency)}</strong></span>
+            <span><small>ROI</small><strong>${formatRoi(activeSummary.roi)}</strong></span>
+          </div>
+        </header>
+        <main id="main" class="shell" tabindex="-1">
+          ${route.view === 'home' ? homeView(summary) : projectView(product)}
+        </main>
       </div>
-      <div class="status-pill">Sanitized demo data · ${dashboard.inventory.references.length} credential refs · no key values</div>
-    </header>
-    <nav class="view-nav" aria-label="FinOps views">
-      <button class="nav-item${route.view === 'home' ? ' is-active' : ''}" data-action="navigate-home">Dashboard</button>
-      ${dashboard.products.map((item) => `
-        <button class="nav-item${route.view === 'project' && item.productId === product.productId ? ' is-active' : ''}" data-action="select-product" data-product-id="${escapeAttr(item.productId)}">
-          ${escapeHtml(item.name)}
-        </button>
-      `).join('')}
-    </nav>
-    <main class="shell">
-      ${route.view === 'home' ? homeView(summary) : projectView(product)}
-    </main>
+    </div>
   `
+
+  root.querySelector('.view-nav .is-active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
 
 function homeView(summary: AccountingSummary): string {
@@ -146,7 +173,7 @@ function projectView(product: ProductDashboardSummary): string {
   return `
     <section class="project-heading">
       <div>
-        <p class="eyebrow">Project View</p>
+        <p class="eyebrow"><a href="${routeToHash({ view: 'home' })}">Dashboard</a> / Project View</p>
         <h2>${escapeHtml(product.name)}</h2>
         <p>${escapeHtml(product.description ?? 'Sanitized FinOps project')}</p>
       </div>
@@ -237,14 +264,27 @@ function profitabilityChart(points: ProfitabilityTrendPoint[], currency: string)
   const profitPath = buildLineChartPath(points.map((point) => point.grossProfit), dimensions, domain)
   const zeroY = zeroLineY(domain, dimensions)
   const latest = points.at(-1)
+  const gridLines = [0.25, 0.5, 0.75].map((ratio) => {
+    const y = dimensions.padding + ratio * (dimensions.height - dimensions.padding * 2)
+    return `<line x1="${dimensions.padding}" y1="${y}" x2="${dimensions.width - dimensions.padding}" y2="${y}" class="chart-gridline" />`
+  }).join('')
+  const revenueMarkers = chartMarkers(points.map((point) => point.revenue), dimensions, domain, 'revenue-marker')
+  const costMarkers = chartMarkers(points.map((point) => point.cost), dimensions, domain, 'cost-marker')
+  const profitMarkers = chartMarkers(points.map((point) => point.grossProfit), dimensions, domain, 'profit-marker')
 
   return `
     <div class="chart-wrap">
-      <svg class="trend-chart" viewBox="0 0 ${dimensions.width} ${dimensions.height}" role="img" aria-label="Revenue cost and gross profit trend">
+      <svg class="trend-chart" viewBox="0 0 ${dimensions.width} ${dimensions.height}" role="img" aria-labelledby="profitability-chart-title profitability-chart-desc">
+        <title id="profitability-chart-title">Revenue, cost, and gross profit trend</title>
+        <desc id="profitability-chart-desc">Line chart comparing revenue, provider cost, and gross profit across the selected accounting periods.</desc>
+        ${gridLines}
         <line x1="${dimensions.padding}" y1="${zeroY}" x2="${dimensions.width - dimensions.padding}" y2="${zeroY}" class="zero-line" />
         <path d="${revenuePath}" class="chart-line revenue-line" />
         <path d="${costPath}" class="chart-line cost-line" />
         <path d="${profitPath}" class="chart-line profit-line" />
+        ${revenueMarkers}
+        ${costMarkers}
+        ${profitMarkers}
       </svg>
       <div class="chart-legend">
         ${legendItem('Revenue', 'revenue')}
@@ -269,10 +309,32 @@ function zeroLineY(domain: { min: number, max: number }, dimensions: { height: n
   return Math.round(y * 100) / 100
 }
 
+function chartMarkers(
+  values: number[],
+  dimensions: { width: number, height: number, padding: number },
+  domain: { min: number, max: number },
+  className: string,
+): string {
+  const innerWidth = dimensions.width - dimensions.padding * 2
+  const innerHeight = dimensions.height - dimensions.padding * 2
+  const xStep = values.length > 1 ? innerWidth / (values.length - 1) : 0
+  const range = domain.max - domain.min || 1
+
+  return values.map((value, index) => {
+    const x = dimensions.padding + index * xStep
+    const y = dimensions.padding + (1 - ((value - domain.min) / range)) * innerHeight
+    return `<circle cx="${roundChartValue(x)}" cy="${roundChartValue(y)}" r="3.4" class="chart-marker ${className}" />`
+  }).join('')
+}
+
+function roundChartValue(value: number): number {
+  return Math.round(value * 100) / 100
+}
+
 function portfolioRow(product: ProductDashboardSummary): string {
   const latest = product.profitabilityTrend.at(-1)
   return `
-    <button class="portfolio-row" data-action="select-product" data-product-id="${escapeAttr(product.productId)}">
+    <a class="portfolio-row" href="${routeToHash({ view: 'project', productId: product.productId })}" aria-label="Open ${escapeAttr(product.name)} project">
       <span>
         <strong>${escapeHtml(product.name)}</strong>
         <small>${escapeHtml(product.owner ?? 'Demo')} · ${escapeHtml(product.lifecycle ?? 'Demo')}</small>
@@ -281,7 +343,7 @@ function portfolioRow(product: ProductDashboardSummary): string {
         <b>${formatMoney(product.summary.grossProfit, product.summary.currency)}</b>
         <small>${latest ? `${formatPeriod(latest.period)} ${formatRoi(latest.roi)}` : formatRoi(product.summary.roi)}</small>
       </span>
-    </button>
+    </a>
   `
 }
 
@@ -362,19 +424,6 @@ function normalizeRoute(next: FinopsRoute): FinopsRoute {
     return next
   }
   return { view: 'home' }
-}
-
-function navigate(next: FinopsRoute): void {
-  const normalized = normalizeRoute(next)
-  const hash = routeToHash(normalized)
-  if (window.location.hash === hash) {
-    route = normalized
-    selectedRepo = ''
-    selectedEnvVar = ''
-    render()
-    return
-  }
-  window.location.hash = hash
 }
 
 function firstProductId(): string {
@@ -517,7 +566,7 @@ function metadataPill(label: string, value: string): string {
 }
 
 function legendItem(label: string, tone: 'revenue' | 'cost' | 'profit'): string {
-  return `<span class="legend-item ${tone}"><i></i>${escapeHtml(label)}</span>`
+  return `<span class="legend-item ${tone}"><i aria-hidden="true"></i>${escapeHtml(label)}</span>`
 }
 
 function trendRange(points: ProfitabilityTrendPoint[]): string {
