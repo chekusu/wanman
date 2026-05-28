@@ -11,6 +11,11 @@ import { createLogger } from './logger.js';
 
 const log = createLogger('auth-manager');
 const AUTH_CHECK_TIMEOUT_MS = 1500;
+const ANSI_ESCAPE_REGEX = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_ESCAPE_REGEX, '');
+}
 
 /** Active login session for a provider */
 interface LoginSession {
@@ -203,7 +208,7 @@ export class AuthManager {
       let resolved = false;
 
       const processOutput = (data: Buffer) => {
-        const text = data.toString();
+        const text = stripAnsi(data.toString());
         log.debug('login stdout', { provider, text: text.trim() });
 
         // Try to extract code
