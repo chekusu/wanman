@@ -9,6 +9,7 @@
  *   wanman escalate <message>
  */
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendCommand } from './commands/send.js';
@@ -142,7 +143,11 @@ export function isDirectCliExecution(metaUrl = import.meta.url, argv = process.a
   if (!entry) return false
 
   try {
-    return path.resolve(entry) === path.resolve(fileURLToPath(metaUrl))
+    const entryPath = path.resolve(entry)
+    const metaPath = path.resolve(fileURLToPath(metaUrl))
+    if (entryPath === metaPath) return true
+
+    return fs.realpathSync(entryPath) === fs.realpathSync(metaPath)
   } catch {
     return false
   }
