@@ -77,6 +77,15 @@ export function createLocalLogBuffer(maxLines = 200): {
   }
 }
 
+/** @internal exported for testing */
+export function appendRuntimeAuditChunk(auditLogPath: string, chunk: Buffer | string): void {
+  try {
+    fs.appendFileSync(auditLogPath, chunk)
+  } catch {
+    // Audit log is best-effort; the live supervisor should keep running.
+  }
+}
+
 async function pickAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -225,14 +234,22 @@ export async function startLocalSupervisor(opts: LocalSupervisorOptions): Promis
   })
   installSharedSkills(opts.sharedSkillsDir, agentHome)
 
+  const auditLogPath = path.join(opts.homeRoot, 'runtime-audit.log')
+  fs.writeFileSync(auditLogPath, '')
   const logBuffer = createLocalLogBuffer()
   const child = spawn('node', [entrypoint], {
     cwd: opts.gitRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: buildLocalSupervisorEnv(process.env, opts, agentHome, binDir, port),
   })
-  child.stdout?.on('data', chunk => logBuffer.pushChunk(chunk))
-  child.stderr?.on('data', chunk => logBuffer.pushChunk(chunk))
+  child.stdout?.on('data', chunk => {
+    logBuffer.pushChunk(chunk)
+    appendRuntimeAuditChunk(auditLogPath, chunk)
+  })
+  child.stderr?.on('data', chunk => {
+    logBuffer.pushChunk(chunk)
+    appendRuntimeAuditChunk(auditLogPath, chunk)
+  })
 
   return {
     port,

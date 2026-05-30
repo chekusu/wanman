@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  appendRuntimeAuditChunk,
   buildLocalSupervisorEnv,
   createHomeLayout,
   createLocalLogBuffer,
@@ -114,6 +115,31 @@ describe('createLocalLogBuffer', () => {
       lines: [],
       cursor: 3,
     })
+  })
+})
+
+describe('appendRuntimeAuditChunk', () => {
+  const tmpDirs: string[] = []
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  function makeTmpDir(): string {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'wanman-runtime-audit-'))
+    tmpDirs.push(dir)
+    return dir
+  }
+
+  it('appends supervisor output chunks verbatim for dashboard audit history', () => {
+    const auditLogPath = path.join(makeTmpDir(), 'runtime-audit.log')
+
+    appendRuntimeAuditChunk(auditLogPath, '12:00:00 supervisor start\n')
+    appendRuntimeAuditChunk(auditLogPath, Buffer.from('raw stderr line\n'))
+
+    expect(fs.readFileSync(auditLogPath, 'utf-8')).toBe('12:00:00 supervisor start\nraw stderr line\n')
   })
 })
 

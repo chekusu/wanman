@@ -74,6 +74,7 @@ import type * as http from 'http';
 import { resolveMaybePromise, type ContextBackend, type MessageTransport } from './runtime-contracts.js';
 import type { AgentMessage } from '@wanman/core';
 import { resolveAgentRuntime } from './agent-adapter.js';
+import type { LoopEvent } from './loop-events.js';
 import {
   SharedSkillManager,
   type ActivationSnapshotRecord,
@@ -81,6 +82,31 @@ import {
 import { AgentHomeManager } from './agent-home-manager.js';
 
 const log = createLogger('supervisor');
+
+type DashboardAuditSource = 'event-bus' | 'runtime-audit' | 'legacy-audit';
+
+interface DashboardAuditEntry {
+  id: string;
+  time: string;
+  source: DashboardAuditSource;
+  kind: string;
+  agent: string | null;
+  message: string;
+  raw: string;
+}
+
+const ANSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_PATTERN, '');
+}
+
+function isReadableAuditLine(line: string): boolean {
+  const compact = line.trim();
+  if (!compact) return false;
+  if (/^[\s─━=]+$/.test(compact)) return false;
+  return true;
+}
 
 function postStorySyncEvent(event: {
   event_type: string;
@@ -199,6 +225,11 @@ export class Supervisor {
   private completedRuns = 0;
   /** Per-agent completed run counts */
   private completedRunsByAgent = new Map<string, number>();
+  /** Full structured event history for the active supervisor run. */
+  private dashboardEvents: DashboardAuditEntry[] = [];
+  private dashboardEventSeq = 0;
+  private dashboardEventSubscribers = new Set<(event: DashboardAuditEntry) => void>();
+  private dashboardEventBusListener: ((event: LoopEvent) => void) | null = null;
 
   constructor(config: AgentMatrixConfig, options?: SupervisorOptions) {
     this.config = config;
@@ -367,8 +398,85 @@ export class Supervisor {
 
   /** Initialize the loop event bus for observability. Call before start(). */
   initEventBus(runId: string): LoopEventBus {
+    if (this._eventBus && this.dashboardEventBusListener) {
+      this._eventBus.off(this.dashboardEventBusListener)
+    }
     this._eventBus = new LoopEventBus(runId)
+    this.dashboardEvents = []
+    this.dashboardEventSeq = 0
+    this.dashboardEventBusListener = (event: LoopEvent) => {
+      const dashboardEvent = this.formatDashboardEvent(event)
+      this.dashboardEvents.push(dashboardEvent)
+      for (const subscriber of this.dashboardEventSubscribers) {
+        try {
+          subscriber(dashboardEvent)
+        } catch {
+          // Dashboard subscribers are best-effort only.
+        }
+      }
+    }
+    this._eventBus.on(this.dashboardEventBusListener)
     return this._eventBus
+  }
+
+  subscribeDashboardEvents(listener: (event: DashboardAuditEntry) => void): () => void {
+    for (const event of this.dashboardEvents) {
+      listener(event)
+    }
+    this.dashboardEventSubscribers.add(listener)
+    return () => {
+      this.dashboardEventSubscribers.delete(listener)
+    }
+  }
+
+  private formatDashboardEvent(event: LoopEvent): DashboardAuditEntry {
+    const timestamp = event.timestamp || new Date().toISOString()
+    const time = Number.isNaN(new Date(timestamp).getTime())
+      ? timestamp
+      : new Date(timestamp).toLocaleTimeString([], { hour12: false })
+    let agent: string | null = 'agent' in event && typeof event.agent === 'string' ? event.agent : null
+    let message: string = event.type
+
+    switch (event.type) {
+      case 'loop.tick':
+        message = `Loop ${event.loop} started.`
+        break
+      case 'loop.classified':
+        message = `Loop ${event.loop} classified as ${event.classification}: ${event.reasons.join('; ') || 'no reasons reported'}.`
+        break
+      case 'agent.spawned':
+        agent = event.agent
+        message = `${event.agent} spawned via ${event.trigger} (${event.lifecycle}).`
+        break
+      case 'task.transition':
+        message = `Task ${event.taskId} moved ${event.from} -> ${event.to}.`
+        break
+      case 'task.blocked':
+        message = `Task ${event.taskId} blocked on ${event.waitingOn.join(', ') || 'unknown dependencies'}.`
+        break
+      case 'queue.backlog':
+        agent = event.agent
+        message = `${event.agent} has ${event.pendingMessages} queued message(s).`
+        break
+      case 'artifact.created':
+        agent = event.agent
+        message = `${event.agent} created ${event.kind}${event.path ? ` at ${event.path}` : ''}.`
+        break
+      case 'agent.budget_exceeded':
+        agent = event.agent
+        message = `${event.agent} exceeded token budget ${event.tokens}/${event.budget}.`
+        break
+    }
+
+    return {
+      id: `evt-${++this.dashboardEventSeq}`,
+      time,
+      source: 'event-bus',
+      kind: event.type,
+      agent,
+      message,
+      raw: JSON.stringify(event),
+    }
   }
 
   /** Build a preamble provider closure that captures supervisor state */
@@ -790,6 +898,8 @@ ${activePaths}`;
       onRpc: (req) => this.handleRpcAsync(req),
       onEvent: (event) => this.handleExternalEvent(event),
       onHealth: () => this.getHealth(),
+      onDashboardData: () => this.getDashboardData(),
+      onDashboardEvents: (send) => this.subscribeDashboardEvents(send),
     });
 
     if (this.headless) {
@@ -1940,6 +2050,207 @@ ${activePaths}`;
     };
 
     return health;
+  }
+
+  getDashboardData(): {
+    port: number | undefined;
+    connectionLabel: string;
+    health: ReturnType<Supervisor['getHealth']>;
+    tasks: ReturnType<TaskPool['listSync']>;
+    initiatives: ReturnType<InitiativeBoard['listSync']>;
+    capsules: ReturnType<ChangeCapsulePool['listSync']>;
+    artifacts: Array<{ agent: string; kind: string; cnt: number }>;
+    live: {
+      raw: string;
+      summary: string;
+      brain: string | null;
+      note: string;
+      events: DashboardAuditEntry[];
+      eventSource: 'supervisor-event-bus' | 'unavailable';
+      streamAvailable: boolean;
+    };
+    healthChecks: Array<{ label: string; status: string }>;
+  } {
+    const health = this.getHealth();
+    const tasks = this.taskPool.listSync();
+    const initiatives = this.initiativeBoard.listSync();
+    const capsules = this.capsulePool.listSync();
+    const artifacts = this.listDashboardArtifacts();
+    const audit = this.readRuntimeAuditTrail();
+    const live = this.readLiveDashboard();
+    const events = [...audit.entries, ...this.dashboardEvents];
+    const streamAvailable = this._eventBus !== null;
+    const entryLabel = events.length === 1 ? 'entry' : 'entries';
+    const note = streamAvailable
+      ? `Streaming audit timeline from the runtime audit log and supervisor event bus (${events.length} ${entryLabel}).`
+      : audit.entries.length > 0
+        ? `Reading audit timeline from the runtime audit log (${events.length} ${entryLabel}); event bus stream is not initialized.`
+        : 'Supervisor event bus is not initialized; event history is unavailable and state panels are snapshot-only.';
+
+    return {
+      port: this.config.port,
+      connectionLabel: `localhost:${this.config.port ?? 'unknown'}`,
+      health,
+      tasks,
+      initiatives,
+      capsules,
+      artifacts,
+      live: {
+        ...live,
+        note,
+        events,
+        eventSource: streamAvailable ? 'supervisor-event-bus' : 'unavailable',
+        streamAvailable,
+      },
+      healthChecks: [
+        { label: 'Supervisor', status: 'healthy' },
+        { label: 'Health endpoint', status: health.status },
+        { label: 'Agents', status: health.agents.some(agent => agent.state === 'running') ? 'active' : 'idle' },
+        { label: 'Task pool', status: tasks.length > 0 ? 'active' : 'idle' },
+        { label: 'Runtime event stream', status: streamAvailable ? 'active' : 'unavailable' },
+        { label: 'Runtime audit log', status: audit.entries.length > 0 ? 'active' : 'idle' },
+        { label: 'Legacy dashboard text', status: live.raw ? 'available' : 'idle' },
+      ],
+    };
+  }
+
+  private listDashboardArtifacts(): Array<{ agent: string; kind: string; cnt: number }> {
+    const workspaceRoot = this.config.workspaceRoot;
+    if (!workspaceRoot || !fs.existsSync(workspaceRoot)) {
+      return [];
+    }
+
+    const counts = new Map<string, { agent: string; kind: string; cnt: number }>();
+    for (const agentName of fs.readdirSync(workspaceRoot)) {
+      const outputDir = path.join(workspaceRoot, agentName, 'output');
+      if (!fs.existsSync(outputDir) || !fs.statSync(outputDir).isDirectory()) continue;
+      for (const fileName of fs.readdirSync(outputDir)) {
+        const ext = path.extname(fileName).replace(/^\./, '') || 'file';
+        const key = `${agentName}:${ext}`;
+        const current = counts.get(key);
+        if (current) current.cnt += 1;
+        else counts.set(key, { agent: agentName, kind: ext, cnt: 1 });
+      }
+    }
+
+    return [...counts.values()].sort((a, b) => {
+      if (b.cnt !== a.cnt) return b.cnt - a.cnt;
+      return `${a.agent}:${a.kind}`.localeCompare(`${b.agent}:${b.kind}`);
+    });
+  }
+
+  private readLiveDashboard(): {
+    raw: string;
+    summary: string;
+    brain: string | null;
+    note: string;
+  } {
+    const overlayRoot = this.config.workspaceRoot ? path.dirname(this.config.workspaceRoot) : null;
+    const dashboardPath = overlayRoot ? path.join(overlayRoot, 'live-dashboard.txt') : null;
+
+    if (!dashboardPath || !fs.existsSync(dashboardPath)) {
+      return {
+        raw: '',
+        summary: this.config.goal || 'Live dashboard text is not available for this run.',
+        brain: null,
+        note: 'No local dashboard text file found; summary comes from supervisor configuration.',
+      };
+    }
+
+    const raw = fs.readFileSync(dashboardPath, 'utf-8');
+    const displayRaw = stripAnsi(raw);
+    const lines = displayRaw.split(/\r?\n/);
+    const summary = lines.find(line => line.includes('wanman run'))?.trim() ?? 'wanman local runtime';
+    const brain = displayRaw.match(/Brain:\s+([^\n]+)/)?.[1]?.trim() ?? null;
+
+    return {
+      raw: displayRaw,
+      summary,
+      brain,
+      note: `Reading ${path.basename(dashboardPath)} from the active takeover overlay for legacy summary metadata only.`,
+    };
+  }
+
+  private readRuntimeAuditTrail(): {
+    raw: string;
+    path: string | null;
+    entries: DashboardAuditEntry[];
+  } {
+    const overlayRoot = this.config.workspaceRoot ? path.dirname(this.config.workspaceRoot) : null;
+    const candidates = overlayRoot
+      ? [
+          { path: path.join(overlayRoot, 'runtime-audit.log'), source: 'runtime-audit' as const },
+          { path: path.join(overlayRoot, 'epistemic-takeover.log'), source: 'legacy-audit' as const },
+        ]
+      : [];
+
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate.path)) continue;
+      const raw = fs.readFileSync(candidate.path, 'utf-8');
+      const entries = raw
+        .split(/\r?\n/)
+        .map((line, index) => this.parseAuditLine(stripAnsi(line), candidate.source, index))
+        .filter((entry): entry is DashboardAuditEntry => entry !== null);
+      if (!entries.length) continue;
+      return { raw, path: candidate.path, entries };
+    }
+
+    return { raw: '', path: null, entries: [] };
+  }
+
+  private parseAuditLine(line: string, source: DashboardAuditSource, index: number): DashboardAuditEntry | null {
+    if (!isReadableAuditLine(line)) return null;
+    const compact = line.trim();
+
+    if (compact.startsWith('{')) {
+      try {
+        const record = JSON.parse(compact) as Record<string, unknown>;
+        const ts = typeof record['ts'] === 'string' ? record['ts'] : '';
+        const scope = typeof record['scope'] === 'string' ? record['scope'] : 'log';
+        const msg = typeof record['msg'] === 'string' ? record['msg'] : compact;
+        const agent = typeof record['agent'] === 'string' ? record['agent'] : null;
+        const method = typeof record['method'] === 'string' ? ` ${record['method']}` : '';
+        const text = typeof record['text'] === 'string' ? `: ${record['text']}` : '';
+        return {
+          id: `${source}:${index}`,
+          time: ts.match(/T(\d{2}:\d{2}:\d{2})/)?.[1] ?? '',
+          source,
+          kind: scope,
+          agent,
+          message: `${msg}${method}${text}`,
+          raw: compact,
+        };
+      } catch {
+        // Fall through to the plain-line parsers; raw malformed JSON is still useful.
+      }
+    }
+
+    const timestampMatch = line.match(/^\s*(\d{2}:\d{2}:\d{2})\s+([^\s]+)\s+(.*)$/);
+    if (timestampMatch) {
+      const time = timestampMatch[1] ?? '';
+      const kind = timestampMatch[2] ?? 'log';
+      const detail = (timestampMatch[3] ?? '').trim();
+      const agent = detail.match(/\(([^)]+)\)/)?.[1] ?? null;
+      return {
+        id: `${source}:${index}`,
+        time,
+        source,
+        kind,
+        agent,
+        message: detail,
+        raw: line.trim(),
+      };
+    }
+
+    return {
+      id: `${source}:${index}`,
+      time: '',
+      source,
+      kind: 'log',
+      agent: null,
+      message: compact,
+      raw: compact,
+    };
   }
 
   /** Graceful shutdown. */
