@@ -673,7 +673,12 @@ ${activePaths}`;
             agent: agentName,
             lifecycle: agent.definition.lifecycle,
           });
-          agent.trigger();
+          void agent.trigger().catch((err) => {
+            log.error('agent trigger failed', {
+              agent: agentName,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         }
       });
     }
@@ -1722,7 +1727,12 @@ ${activePaths}`;
             lifecycle: agent.definition.lifecycle,
             unlockedBy: completedTaskId,
           });
-          agent.trigger();
+          void agent.trigger().catch((err) => {
+            log.error('agent trigger failed', {
+              agent: agentName,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         }
       }
     } catch (err) {

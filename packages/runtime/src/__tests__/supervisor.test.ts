@@ -896,7 +896,7 @@ describe('Supervisor', () => {
       const pingAgent = {
         definition: { lifecycle: 'on-demand' },
         state: 'idle',
-        trigger: vi.fn(),
+        trigger: vi.fn().mockResolvedValue(undefined),
       }
       ;(supervisor as unknown as { agents: Map<string, unknown> }).agents.set('ping', pingAgent)
 
@@ -925,6 +925,95 @@ describe('Supervisor', () => {
       expect(helpers.hasBlockedTasksOnly('ping')).toBe(false)
       expect(helpers.hasAutonomousWork('ping')).toBe(true)
       helpers.taskPool.listSync = originalListSync
+    })
+
+    it('survives trigger() rejections from woken agents (no unhandled rejection)', async () => {
+      const unhandled: unknown[] = []
+      const onUnhandled = (reason: unknown) => { unhandled.push(reason) }
+      process.on('unhandledRejection', onUnhandled)
+      try {
+        const root = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+          title: 'Root task 2',
+          description: 'unblocks follow-up',
+          assignee: 'echo',
+        }))
+        const rootTask = root.result as { id: string }
+        await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+          title: 'Blocked task 2',
+          description: 'waits on root',
+          assignee: 'ping',
+          dependsOn: [rootTask.id],
+        }))
+
+        // Plain function (not vi.fn()): vitest mocks attach internal handlers
+        // to returned promises, which would mask an unhandled rejection.
+        let triggerCalls = 0
+        const pingAgent = {
+          definition: { lifecycle: 'on-demand' },
+          state: 'idle',
+          trigger: () => {
+            triggerCalls++
+            return Promise.reject(new Error('spawn exploded'))
+          },
+        }
+        ;(supervisor as unknown as { agents: Map<string, unknown> }).agents.set('ping', pingAgent)
+
+        await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_UPDATE, {
+          id: rootTask.id,
+          status: 'done',
+        }))
+        const helpers = supervisor as unknown as {
+          wakeUnblockedAgents(completedTaskId: string): void
+        }
+        // Note: marking the root task done already wakes unblocked agents
+        // internally, so trigger may fire more than once here.
+        expect(() => helpers.wakeUnblockedAgents(rootTask.id)).not.toThrow()
+        expect(triggerCalls).toBeGreaterThanOrEqual(1)
+        // Let the rejected trigger promise settle, then verify it was handled.
+        await new Promise(resolve => setImmediate(resolve))
+        await new Promise(resolve => setImmediate(resolve))
+        expect(unhandled).toEqual([])
+      } finally {
+        process.off('unhandledRejection', onUnhandled)
+      }
+    })
+
+    it('survives trigger() rejections when waking an idle agent for a new message', async () => {
+      const unhandled: unknown[] = []
+      const onUnhandled = (reason: unknown) => { unhandled.push(reason) }
+      process.on('unhandledRejection', onUnhandled)
+      try {
+        // Plain function (not vi.fn()): vitest mocks attach internal handlers
+        // to returned promises, which would mask an unhandled rejection.
+        let triggerCalls = 0
+        const pingAgent = {
+          definition: { lifecycle: 'on-demand' },
+          state: 'idle',
+          trigger: () => {
+            triggerCalls++
+            return Promise.reject(new Error('spawn exploded'))
+          },
+        }
+        ;(supervisor as unknown as { agents: Map<string, unknown> }).agents.set('ping', pingAgent)
+
+        // agent.send fires the relay new-message callback synchronously, which
+        // wakes the idle on-demand agent via trigger().
+        const res = supervisor.handleRpc(rpc(RPC_METHODS.AGENT_SEND, {
+          from: 'cli',
+          to: 'ping',
+          type: 'message',
+          payload: 'wake up',
+          priority: 'normal',
+        }))
+        expect(res.error).toBeUndefined()
+        expect(triggerCalls).toBe(1)
+        // Let the rejected trigger promise settle, then verify it was handled.
+        await new Promise(resolve => setImmediate(resolve))
+        await new Promise(resolve => setImmediate(resolve))
+        expect(unhandled).toEqual([])
+      } finally {
+        process.off('unhandledRejection', onUnhandled)
+      }
     })
 
     it('builds preamble/env providers from active skill snapshots and records run feedback', async () => {
