@@ -12,6 +12,13 @@ import { createLogger } from './logger.js';
 const log = createLogger('auth-manager');
 const AUTH_CHECK_TIMEOUT_MS = 1500;
 
+function stripTerminalControlSequences(value: string): string {
+  return value
+    .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, '')
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1B[@-Z\\-_]/g, '');
+}
+
 /** Active login session for a provider */
 interface LoginSession {
   provider: AuthProviderName;
@@ -203,7 +210,7 @@ export class AuthManager {
       let resolved = false;
 
       const processOutput = (data: Buffer) => {
-        const text = data.toString();
+        const text = stripTerminalControlSequences(data.toString());
         log.debug('login stdout', { provider, text: text.trim() });
 
         // Try to extract code
