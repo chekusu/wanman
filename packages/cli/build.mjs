@@ -26,3 +26,15 @@ await build({
 });
 
 console.log('Build complete: dist/sdk.js');
+
+await build({
+  entryPoints: ['src/standalone-build.ts'],
+  bundle: true,
+  platform: 'node',
+  target: 'node20',
+  format: 'esm',
+  outfile: 'dist/standalone-build.js',
+  external: ['esbuild'],
+});
+
+console.log('Build complete: dist/standalone-build.js');
