@@ -137,7 +137,7 @@ describe('local takeover progress helpers', () => {
 })
 
 describe('maybeNudgeLocalPrExecution', () => {
-  it('steers implementers and mission control when progress has no PR', async () => {
+  it('steers only the branch owner and ceo when progress has no PR', async () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined)
     const state = makeState({
       activeBranch: 'wanman/task',
@@ -149,14 +149,18 @@ describe('maybeNudgeLocalPrExecution', () => {
         { id: '2', title: 'Review', status: 'in_progress', assignee: 'dev-1', priority: 1 },
         { id: '3', title: 'Done', status: 'done', assignee: 'devops', priority: 1 },
       ],
+      capsules: [
+        { id: 'capsule-1', status: 'open', ownerAgent: 'dev', branch: 'wanman/task', taskId: '1' },
+        { id: 'capsule-2', status: 'open', ownerAgent: 'dev-1', branch: 'wanman/other-task', taskId: '2' },
+      ],
     })
     const nudgeState: { lastSignature?: string; lastSentAt?: number } = {}
 
     await expect(maybeNudgeLocalPrExecution({ sendMessage } as never, state, nudgeState)).resolves.toBe(true)
 
-    expect(collectPrNudgeRecipients(state)).toEqual(['dev', 'dev-1', 'ceo'])
+    expect(collectPrNudgeRecipients(state)).toEqual(['dev', 'ceo'])
     expect(buildPrNudgeSignature(state)).toContain('wanman/task')
-    expect(sendMessage).toHaveBeenCalledTimes(3)
+    expect(sendMessage).toHaveBeenCalledTimes(2)
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       from: 'takeover-pr-allocator',
       to: 'dev',
@@ -165,7 +169,66 @@ describe('maybeNudgeLocalPrExecution', () => {
     expect(nudgeState.lastSignature).toBeDefined()
 
     await expect(maybeNudgeLocalPrExecution({ sendMessage } as never, state, nudgeState)).resolves.toBe(false)
-    expect(sendMessage).toHaveBeenCalledTimes(3)
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it('suppresses PR nudges when a shared branch cannot be mapped to one owner', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined)
+    const state = makeState({
+      activeBranch: 'wanman/task',
+      branchAhead: 2,
+      hasUpstream: true,
+      modifiedFiles: ['src/app.ts'],
+      tasks: [
+        { id: '1', title: 'Implement', status: 'assigned', assignee: 'dev', priority: 1 },
+        { id: '2', title: 'Review', status: 'assigned', assignee: 'dev-1', priority: 1 },
+      ],
+      capsules: [
+        { id: 'capsule-1', status: 'open', ownerAgent: 'dev', branch: 'wanman/one', taskId: '1' },
+        { id: 'capsule-2', status: 'open', ownerAgent: 'dev-1', branch: 'wanman/two', taskId: '2' },
+      ],
+    })
+
+    expect(collectPrNudgeRecipients(state)).toEqual([])
+    await expect(maybeNudgeLocalPrExecution({ sendMessage } as never, state, {})).resolves.toBe(false)
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the only implementer when there is no capsule mapping yet', async () => {
+    const state = makeState({
+      activeBranch: 'wanman/task',
+      tasks: [
+        { id: '1', title: 'Implement', status: 'assigned', assignee: 'dev', priority: 1 },
+      ],
+    })
+
+    expect(collectPrNudgeRecipients(state)).toEqual(['dev', 'ceo'])
+  })
+
+  it('suppresses PR nudges while the mapped branch owner is already running', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined)
+    const state = makeState({
+      activeBranch: 'wanman/task',
+      branchAhead: 1,
+      hasUpstream: true,
+      modifiedFiles: ['src/app.ts'],
+      health: {
+        agents: [
+          { name: 'ceo', state: 'idle', lifecycle: '24/7' },
+          { name: 'dev', state: 'running', lifecycle: 'on-demand' },
+          { name: 'dev-1', state: 'idle', lifecycle: 'on-demand' },
+        ],
+      },
+      tasks: [
+        { id: '1', title: 'Implement', status: 'in_progress', assignee: 'dev', priority: 1 },
+      ],
+      capsules: [
+        { id: 'capsule-1', status: 'open', ownerAgent: 'dev', branch: 'wanman/task', taskId: '1' },
+      ],
+    })
+
+    await expect(maybeNudgeLocalPrExecution({ sendMessage } as never, state, {})).resolves.toBe(false)
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   it('does not send PR nudges when a PR already exists or no branch work is ready', async () => {
