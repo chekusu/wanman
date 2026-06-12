@@ -132,29 +132,38 @@ function normalizeThreadSyncMessageType(
   return inferHumanMessageType(payload, priority);
 }
 
-function postStorySyncArtifact(artifact: {
+async function postStorySyncArtifact(artifact: {
   id?: string;
   agent?: string;
   kind: string;
   path: string;
   content?: string | null;
   metadata?: Record<string, unknown>;
-}): void {
+}): Promise<void> {
   const syncUrl = process.env['WANMAN_SYNC_URL'];
   const syncSecret = process.env['WANMAN_SYNC_SECRET'];
   const syncStoryId = process.env['WANMAN_STORY_ID'];
   if (!syncUrl || !syncStoryId) return;
 
-  fetch(`${syncUrl}/artifact`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Story-Id': syncStoryId,
-      ...(syncSecret ? { 'X-Sync-Secret': syncSecret } : {}),
-    },
-    body: JSON.stringify(artifact),
-    signal: AbortSignal.timeout(5_000),
-  }).catch(() => {});
+  try {
+    const response = await fetch(`${syncUrl}/artifact`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Story-Id': syncStoryId,
+        ...(syncSecret ? { 'X-Sync-Secret': syncSecret } : {}),
+      },
+      body: JSON.stringify(artifact),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      log.warn('story artifact sync failed', { status: response.status });
+    }
+  } catch (err) {
+    log.warn('story artifact sync failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 export interface SupervisorOptions {
@@ -1438,7 +1447,7 @@ ${activePaths}`;
             });
           }
           // POST to external sync hook (best-effort)
-          postStorySyncArtifact({
+          await postStorySyncArtifact({
             id: String(insertedArtifact?.id ?? Date.now()),
             agent,
             kind,
