@@ -35,6 +35,8 @@ vi.mock('../agent-process.js', () => {
       if (startShouldFail) throw new Error('spawn failed')
     }
     trigger() { return Promise.resolve() }
+    pause() {}
+    resume() {}
     stop() {}
     handleSteer() {}
   }
@@ -1014,6 +1016,66 @@ describe('Supervisor', () => {
       } finally {
         process.off('unhandledRejection', onUnhandled)
       }
+    })
+
+    it('wakes idle on-demand agents with pending messages when supervisor resumes', async () => {
+      const pingAgent = {
+        definition: { lifecycle: 'on-demand' },
+        state: 'running',
+        pause: vi.fn(),
+        resume: vi.fn(),
+        trigger: vi.fn().mockResolvedValue(undefined),
+      }
+      ;(supervisor as unknown as { agents: Map<string, unknown> }).agents.set('ping', pingAgent)
+
+      const sent = supervisor.handleRpc(rpc(RPC_METHODS.AGENT_SEND, {
+        from: 'cli',
+        to: 'ping',
+        type: 'message',
+        payload: 'resume backlog',
+        priority: 'normal',
+      }))
+      expect(sent.error).toBeUndefined()
+      expect(pingAgent.trigger).not.toHaveBeenCalled()
+
+      pingAgent.state = 'idle'
+      const resumed = await supervisor.handleRpcAsync(rpc(RPC_METHODS.SUPERVISOR_RESUME))
+
+      expect(resumed.error).toBeUndefined()
+      expect((resumed.result as { woken?: number }).woken).toBe(1)
+      expect(pingAgent.trigger).toHaveBeenCalledTimes(1)
+    })
+
+    it('wakes idle on-demand agents with runnable assigned work and no pending messages on resume', async () => {
+      const pingAgent = {
+        definition: { lifecycle: 'on-demand' },
+        state: 'running',
+        pause: vi.fn(),
+        resume: vi.fn(),
+        trigger: vi.fn().mockResolvedValue(undefined),
+      }
+      ;(supervisor as unknown as { agents: Map<string, unknown> }).agents.set('ping', pingAgent)
+
+      const taskRes = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+        title: 'Runnable task',
+        description: 'already assigned before resume',
+        assignee: 'ping',
+      }))
+      expect(taskRes.error).toBeUndefined()
+      expect(pingAgent.trigger).not.toHaveBeenCalled()
+
+      const drained = await supervisor.handleRpcAsync(rpc(RPC_METHODS.AGENT_RECV, {
+        agent: 'ping',
+      }))
+      expect(drained.error).toBeUndefined()
+      expect((drained.result as { messages: unknown[] }).messages.length).toBe(1)
+
+      pingAgent.state = 'idle'
+      const resumed = await supervisor.handleRpcAsync(rpc(RPC_METHODS.SUPERVISOR_RESUME))
+
+      expect(resumed.error).toBeUndefined()
+      expect((resumed.result as { woken?: number }).woken).toBe(1)
+      expect(pingAgent.trigger).toHaveBeenCalledTimes(1)
     })
 
     it('builds preamble/env providers from active skill snapshots and records run feedback', async () => {

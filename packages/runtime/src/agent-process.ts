@@ -393,17 +393,26 @@ export class AgentProcess {
     this._state = 'running';
     this.currentUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     const pending = await resolveMaybePromise(this.relay.recv(this.definition.name, 10));
-    if (pending.length === 0) {
+    const hasRunnableWork = pending.length === 0
+      && this.hasAutonomousWork
+      && this.hasAutonomousWork(this.definition.name);
+    if (pending.length === 0 && !hasRunnableWork) {
       this.setIdleIfActive();
       log.info('no pending messages, skipping trigger', { agent: this.definition.name });
       return;
     }
 
-    const msgs = pending.map(m => {
-      const text = typeof m.payload === 'string' ? m.payload : JSON.stringify(m.payload);
-      return `[${m.priority}/${m.type}] ${m.from}: ${text}`;
-    }).join('\n');
-    let prompt = `You have been triggered. You have ${pending.length} pending message(s):\n\n${msgs}\n\nProcess these messages. Your task is complete once done.`;
+    let prompt: string;
+    if (pending.length > 0) {
+      const msgs = pending.map(m => {
+        const text = typeof m.payload === 'string' ? m.payload : JSON.stringify(m.payload);
+        return `[${m.priority}/${m.type}] ${m.from}: ${text}`;
+      }).join('\n');
+      prompt = `You have been triggered. You have ${pending.length} pending message(s):\n\n${msgs}\n\nProcess these messages. Your task is complete once done.`;
+    } else {
+      prompt = 'You have been triggered to continue runnable assigned work. Run `wanman task list --assignee ' +
+        `${this.definition.name}\` to inspect current tasks, then continue the highest-priority unblocked task.`;
+    }
 
     // Inject preamble context
     const preamble = this.preambleProvider
