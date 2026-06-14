@@ -654,32 +654,7 @@ ${activePaths}`;
 
       // Wake on-demand / idle_cached agents when any message arrives (not just steer)
       this.relay.setNewMessageCallback((agentName) => {
-        const agent = this.agents.get(agentName);
-        if (
-          agent
-          && (agent.definition.lifecycle === 'on-demand' || agent.definition.lifecycle === 'idle_cached')
-          && agent.state === 'idle'
-        ) {
-          // Check if any assigned task for this agent has unmet dependencies
-          const blocked = this.hasBlockedTasksOnly(agentName);
-          if (blocked) {
-            log.info('idle agent has only blocked tasks, deferring', {
-              agent: agentName,
-              lifecycle: agent.definition.lifecycle,
-            });
-            return;
-          }
-          log.info('waking idle agent for new message', {
-            agent: agentName,
-            lifecycle: agent.definition.lifecycle,
-          });
-          void agent.trigger().catch((err) => {
-            log.error('agent trigger failed', {
-              agent: agentName,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-        }
+        this.wakeIdleAgentForPendingWork(agentName, 'new_message');
       });
     }
   }
@@ -822,6 +797,8 @@ ${activePaths}`;
         });
       });
     }
+
+    this.wakeIdleAgentsForPendingWork('startup');
 
     log.info('supervisor started', {
       agents: this.config.agents.map(a => a.name),
@@ -1687,11 +1664,13 @@ ${activePaths}`;
       }
 
       case RPC_METHODS.SUPERVISOR_RESUME: {
+        let woken = 0;
         for (const [name, agent] of this.agents) {
           agent.resume();
           log.info('resumed agent', { agent: name });
+          if (this.wakeIdleAgentForPendingWork(name, 'resume')) woken++;
         }
-        return createRpcResponse(req.id, { status: 'running', agents: this.agents.size });
+        return createRpcResponse(req.id, { status: 'running', agents: this.agents.size, woken });
       }
 
       default:
@@ -1738,6 +1717,62 @@ ${activePaths}`;
     } catch (err) {
       log.warn('wakeUnblockedAgents failed', { error: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  private wakeIdleAgentsForPendingWork(reason: string): number {
+    let woken = 0;
+    for (const name of this.agents.keys()) {
+      if (this.wakeIdleAgentForPendingWork(name, reason)) woken++;
+    }
+    return woken;
+  }
+
+  private wakeIdleAgentForPendingWork(agentName: string, reason: string): boolean {
+    const agent = this.agents.get(agentName);
+    if (
+      !agent
+      || !(agent.definition.lifecycle === 'on-demand' || agent.definition.lifecycle === 'idle_cached')
+      || agent.state !== 'idle'
+    ) {
+      return false;
+    }
+
+    let pendingCount = 0;
+    try {
+      pendingCount = this.relay.countPending(agentName);
+    } catch (err) {
+      log.warn('pending message count failed', {
+        agent: agentName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const hasRunnableWork = pendingCount > 0 || this.hasAutonomousWork(agentName);
+    if (!hasRunnableWork) return false;
+
+    if (this.hasBlockedTasksOnly(agentName)) {
+      log.info('idle agent has only blocked tasks, deferring', {
+        agent: agentName,
+        lifecycle: agent.definition.lifecycle,
+        reason,
+        pendingCount,
+      });
+      return false;
+    }
+
+    log.info('waking idle agent for pending work', {
+      agent: agentName,
+      lifecycle: agent.definition.lifecycle,
+      reason,
+      pendingCount,
+    });
+    void agent.trigger().catch((err) => {
+      log.error('agent trigger failed', {
+        agent: agentName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    return true;
   }
 
   /**

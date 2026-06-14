@@ -387,6 +387,35 @@ describe('AgentProcess', () => {
       expect(spawnClaudeCode).not.toHaveBeenCalled()
     })
 
+    it('should spawn without pending messages when runnable assigned work exists', async () => {
+      const { spawnClaudeCode } = await import('../claude-code.js')
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[0].resolve(0)
+
+      const agent = new AgentProcess(
+        makeDef(),
+        relay,
+        '/tmp',
+        undefined,
+        undefined,
+        undefined,
+        () => '### Current Tasks\n- [task-1] Continue work',
+        undefined,
+        undefined,
+        () => true,
+      )
+
+      await agent.trigger()
+
+      expect(spawnClaudeCode).toHaveBeenCalledWith(expect.objectContaining({
+        initialMessage: expect.stringContaining('continue runnable assigned work'),
+      }))
+      expect(spawnClaudeCode).toHaveBeenCalledWith(expect.objectContaining({
+        initialMessage: expect.stringContaining('Current Tasks'),
+      }))
+      expect(agent.state).toBe('idle')
+    })
+
     it('should skip trigger when already running', async () => {
       waitDeferreds[0] = deferred<number>()
 
