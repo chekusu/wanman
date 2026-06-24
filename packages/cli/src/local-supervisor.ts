@@ -150,28 +150,70 @@ export function installSharedSkills(sharedSkillsDir: string, agentHome: string):
   }
 }
 
+function writePosixWrapper(target: string, body: string): void {
+  fs.writeFileSync(target, body)
+  fs.chmodSync(target, 0o755)
+}
+
+function quoteForCmd(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+function writeWindowsCmdWrapper(target: string, commandLine: string): void {
+  fs.writeFileSync(target, `@echo off\r\n${commandLine}\r\n`)
+}
+
+function resolvePathEnvKey(
+  baseEnv: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): string {
+  if (platform !== 'win32') {
+    return 'PATH'
+  }
+  return Object.keys(baseEnv).find(key => key === 'Path')
+    ?? Object.keys(baseEnv).find(key => key.toLowerCase() === 'path')
+    ?? 'Path'
+}
+
+function pathDelimiterFor(platform: NodeJS.Platform): string {
+  return platform === 'win32' ? ';' : ':'
+}
+
+interface HomeLayoutOptions {
+  home?: string
+  cliHostEntrypoint?: string
+  platform?: NodeJS.Platform
+}
+
 /** @internal exported for testing */
 export function createHomeLayout(
   homeRoot: string,
-  options: { home?: string; cliHostEntrypoint?: string } = {},
+  options: HomeLayoutOptions = {},
 ): { agentHome: string; binDir: string } {
-  const home = options.home ?? process.env['HOME'] ?? '/root'
+  const home = options.home ?? process.env['HOME'] ?? process.env['USERPROFILE'] ?? '/root'
+  const platform = options.platform ?? process.platform
   const binDir = path.join(homeRoot, 'bin')
   const agentHome = path.join(homeRoot, 'home')
   fs.mkdirSync(binDir, { recursive: true })
   fs.mkdirSync(agentHome, { recursive: true })
 
   const cliHostEntrypoint = options.cliHostEntrypoint ?? resolveCliEntrypoint()
-  const wanmanWrapper = path.join(binDir, 'wanman')
-  fs.writeFileSync(
-    wanmanWrapper,
-    `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(cliHostEntrypoint)} "$@"\n`,
-  )
-  fs.chmodSync(wanmanWrapper, 0o755)
-
-  const pnpmWrapper = path.join(binDir, 'pnpm')
-  fs.writeFileSync(pnpmWrapper, '#!/usr/bin/env bash\nexec corepack pnpm "$@"\n')
-  fs.chmodSync(pnpmWrapper, 0o755)
+  if (platform === 'win32') {
+    writeWindowsCmdWrapper(
+      path.join(binDir, 'wanman.cmd'),
+      `${quoteForCmd(process.execPath)} ${quoteForCmd(cliHostEntrypoint)} %*`,
+    )
+    writeWindowsCmdWrapper(path.join(binDir, 'pnpm.cmd'), 'corepack pnpm %*')
+  } else {
+    writePosixWrapper(
+      path.join(binDir, 'wanman'),
+      `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(cliHostEntrypoint)} "$@"\n`,
+    )
+    writePosixWrapper(
+      path.join(binDir, 'pnpm'),
+      '#!/usr/bin/env bash\nexec corepack pnpm "$@"\n',
+    )
+  }
 
   for (const entry of ['.codex', '.claude', '.config', '.gitconfig', '.git-credentials', '.ssh']) {
     syncHomeEntry(path.join(home, entry), path.join(agentHome, entry))
@@ -188,6 +230,7 @@ export function buildLocalSupervisorEnv(
   agentHome: string,
   binDir: string,
   port: number,
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   const env = { ...baseEnv }
 
@@ -195,11 +238,23 @@ export function buildLocalSupervisorEnv(
   delete env['CODEX_CI']
   delete env['CODEX_SANDBOX_NETWORK_DISABLED']
   delete env['CODEX_THREAD_ID']
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'path') {
+      delete env[key]
+    }
+  }
+
+  const pathKey = resolvePathEnvKey(baseEnv, platform)
+  const currentPath = baseEnv[pathKey] ?? baseEnv['PATH'] ?? baseEnv['Path'] ?? ''
+  const updatedPath = currentPath
+    ? `${binDir}${pathDelimiterFor(platform)}${currentPath}`
+    : binDir
 
   return {
     ...env,
     HOME: agentHome,
-    PATH: `${binDir}:${baseEnv['PATH'] || ''}`,
+    ...(platform === 'win32' ? { USERPROFILE: agentHome } : {}),
+    [pathKey]: updatedPath,
     WANMAN_URL: `http://127.0.0.1:${port}`,
     WANMAN_CONFIG: opts.configPath,
     WANMAN_WORKSPACE: opts.workspaceRoot,
