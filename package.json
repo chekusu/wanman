@@ -9,6 +9,7 @@
     "build": "turbo build",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
+    "test:coverage": "vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.exclude=**/dist/**",
     "clean": "turbo clean && rm -rf node_modules"
   },
   "devDependencies": {

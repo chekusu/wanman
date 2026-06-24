@@ -15,6 +15,7 @@
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "standalone": "node build-standalone.mjs",
     "standalone:linux": "node build-standalone.mjs --linux",
     "standalone:all": "node build-standalone.mjs --all",
