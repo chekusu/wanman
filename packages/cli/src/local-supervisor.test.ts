@@ -172,13 +172,36 @@ describe('local supervisor home layout helpers', () => {
     const layout = createHomeLayout(homeRoot, {
       home: hostHome,
       cliHostEntrypoint: cliEntrypoint,
+      platform: 'linux',
     })
 
     const wanmanWrapper = path.join(layout.binDir, 'wanman')
     expect(fs.readFileSync(wanmanWrapper, 'utf-8')).toContain(JSON.stringify(cliEntrypoint))
-    expect(fs.statSync(wanmanWrapper).mode & 0o111).toBeGreaterThan(0)
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(wanmanWrapper).mode & 0o111).toBeGreaterThan(0)
+    }
     expect(fs.lstatSync(path.join(layout.agentHome, '.config')).isSymbolicLink()).toBe(true)
-    expect(fs.readFileSync(path.join(layout.agentHome, '.bash_profile'), 'utf-8')).toContain(layout.binDir)
+    expect(fs.readFileSync(path.join(layout.agentHome, '.bash_profile'), 'utf-8')).toContain(JSON.stringify(layout.binDir))
+  })
+
+  it('creates Windows command wrappers for PowerShell and cmd', () => {
+    const hostHome = makeTmpDir('wanman-host-home-win-')
+    const homeRoot = makeTmpDir('wanman-home-layout-win-')
+    const cliEntrypoint = path.join(homeRoot, 'host-cli.js')
+    fs.writeFileSync(cliEntrypoint, '')
+    fs.mkdirSync(path.join(hostHome, '.config'))
+
+    const layout = createHomeLayout(homeRoot, {
+      home: hostHome,
+      cliHostEntrypoint: cliEntrypoint,
+      platform: 'win32',
+    })
+
+    const wanmanWrapper = path.join(layout.binDir, 'wanman.cmd')
+    const pnpmWrapper = path.join(layout.binDir, 'pnpm.cmd')
+    expect(fs.readFileSync(wanmanWrapper, 'utf-8')).toContain(cliEntrypoint)
+    expect(fs.readFileSync(pnpmWrapper, 'utf-8')).toContain('corepack pnpm %*')
+    expect(fs.lstatSync(path.join(layout.agentHome, '.config')).isSymbolicLink()).toBe(true)
   })
 })
 
@@ -200,7 +223,7 @@ describe('buildLocalSupervisorEnv', () => {
       runtime: 'codex',
       codexModel: 'gpt-test',
       codexReasoningEffort: 'high',
-    }, '/tmp/home', '/tmp/bin', 3333)
+    }, '/tmp/home', '/tmp/bin', 3333, 'linux')
 
     expect(env['HOME']).toBe('/tmp/home')
     expect(env['PATH']).toBe('/tmp/bin:/usr/bin')
@@ -214,6 +237,33 @@ describe('buildLocalSupervisorEnv', () => {
     expect(env['KEEP']).toBe('yes')
     expect(env['CODEX_CI']).toBeUndefined()
     expect(env['CODEX_SANDBOX_NETWORK_DISABLED']).toBeUndefined()
+    expect(env['CODEX_THREAD_ID']).toBeUndefined()
+  })
+
+  it('uses Windows PATH semantics and USERPROFILE for nested supervisors', () => {
+    const env = buildLocalSupervisorEnv({
+      Path: 'C:\\Windows\\System32',
+      CODEX_CI: '1',
+      CODEX_THREAD_ID: 'thread',
+      KEEP: 'yes',
+    }, {
+      configPath: 'C:\\tmp\\agents.json',
+      workspaceRoot: 'C:\\tmp\\agents',
+      gitRoot: 'C:\\tmp\\repo',
+      sharedSkillsDir: 'C:\\tmp\\skills',
+      homeRoot: 'C:\\tmp\\home-root',
+      goal: 'ship',
+      runtime: 'codex',
+      codexModel: 'gpt-test',
+      codexReasoningEffort: 'high',
+    }, 'C:\\tmp\\home', 'C:\\tmp\\bin', 3333, 'win32')
+
+    expect(env['HOME']).toBe('C:\\tmp\\home')
+    expect(env['USERPROFILE']).toBe('C:\\tmp\\home')
+    expect(env['Path']).toBe('C:\\tmp\\bin;C:\\Windows\\System32')
+    expect(env['PATH']).toBeUndefined()
+    expect(env['KEEP']).toBe('yes')
+    expect(env['CODEX_CI']).toBeUndefined()
     expect(env['CODEX_THREAD_ID']).toBeUndefined()
   })
 })
