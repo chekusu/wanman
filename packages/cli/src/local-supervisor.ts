@@ -150,33 +150,87 @@ export function installSharedSkills(sharedSkillsDir: string, agentHome: string):
   }
 }
 
+function isWindowsPlatform(platform: NodeJS.Platform): boolean {
+  return platform === 'win32'
+}
+
+function writeUnixWrapper(filePath: string, command: string): void {
+  fs.writeFileSync(filePath, `#!/usr/bin/env bash\nexec ${command} "$@"\n`)
+  fs.chmodSync(filePath, 0o755)
+}
+
+function quoteBatchPath(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+function quotePowerShellPath(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+function writeWindowsCmdWrapper(filePath: string, command: string): void {
+  fs.writeFileSync(filePath, `@echo off\r\n${command}\r\n`)
+}
+
+function writeWindowsPowerShellWrapper(filePath: string, command: string): void {
+  fs.writeFileSync(filePath, `${command}\r\nexit $LASTEXITCODE\r\n`)
+}
+
+function writeWindowsPowerShellProfile(agentHome: string, binDir: string): void {
+  const profileDir = path.join(agentHome, 'Documents', 'PowerShell')
+  fs.mkdirSync(profileDir, { recursive: true })
+  const profilePath = path.join(profileDir, 'Microsoft.PowerShell_profile.ps1')
+  const quotedBinDir = quotePowerShellPath(binDir)
+  fs.writeFileSync(
+    profilePath,
+    [
+      `$wanmanBin = ${quotedBinDir}`,
+      'if (-not $env:PATH) {',
+      '  $env:PATH = $wanmanBin',
+      `} elseif (($env:PATH -split [System.IO.Path]::PathSeparator) -notcontains $wanmanBin) {`,
+      '  $env:PATH = $wanmanBin + [System.IO.Path]::PathSeparator + $env:PATH',
+      '}',
+      '',
+    ].join('\r\n'),
+  )
+}
+
 /** @internal exported for testing */
 export function createHomeLayout(
   homeRoot: string,
-  options: { home?: string; cliHostEntrypoint?: string } = {},
+  options: { home?: string; cliHostEntrypoint?: string; platform?: NodeJS.Platform } = {},
 ): { agentHome: string; binDir: string } {
   const home = options.home ?? process.env['HOME'] ?? '/root'
+  const platform = options.platform ?? process.platform
   const binDir = path.join(homeRoot, 'bin')
   const agentHome = path.join(homeRoot, 'home')
   fs.mkdirSync(binDir, { recursive: true })
   fs.mkdirSync(agentHome, { recursive: true })
 
   const cliHostEntrypoint = options.cliHostEntrypoint ?? resolveCliEntrypoint()
-  const wanmanWrapper = path.join(binDir, 'wanman')
-  fs.writeFileSync(
-    wanmanWrapper,
-    `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(cliHostEntrypoint)} "$@"\n`,
-  )
-  fs.chmodSync(wanmanWrapper, 0o755)
-
-  const pnpmWrapper = path.join(binDir, 'pnpm')
-  fs.writeFileSync(pnpmWrapper, '#!/usr/bin/env bash\nexec corepack pnpm "$@"\n')
-  fs.chmodSync(pnpmWrapper, 0o755)
+  if (isWindowsPlatform(platform)) {
+    writeWindowsCmdWrapper(
+      path.join(binDir, 'wanman.cmd'),
+      `${quoteBatchPath(process.execPath)} ${quoteBatchPath(cliHostEntrypoint)} %*`,
+    )
+    writeWindowsPowerShellWrapper(
+      path.join(binDir, 'wanman.ps1'),
+      `& ${quotePowerShellPath(process.execPath)} ${quotePowerShellPath(cliHostEntrypoint)} @args`,
+    )
+    writeWindowsCmdWrapper(path.join(binDir, 'pnpm.cmd'), 'call corepack pnpm %*')
+    writeWindowsPowerShellWrapper(path.join(binDir, 'pnpm.ps1'), 'corepack pnpm @args')
+    writeWindowsPowerShellProfile(agentHome, binDir)
+  } else {
+    writeUnixWrapper(
+      path.join(binDir, 'wanman'),
+      `${JSON.stringify(process.execPath)} ${JSON.stringify(cliHostEntrypoint)}`,
+    )
+    writeUnixWrapper(path.join(binDir, 'pnpm'), 'corepack pnpm')
+    fs.writeFileSync(path.join(agentHome, '.bash_profile'), `export PATH=${JSON.stringify(binDir)}:$PATH\n`)
+  }
 
   for (const entry of ['.codex', '.claude', '.config', '.gitconfig', '.git-credentials', '.ssh']) {
     syncHomeEntry(path.join(home, entry), path.join(agentHome, entry))
   }
-  fs.writeFileSync(path.join(agentHome, '.bash_profile'), `export PATH=${JSON.stringify(binDir)}:$PATH\n`)
 
   return { agentHome, binDir }
 }
@@ -188,8 +242,10 @@ export function buildLocalSupervisorEnv(
   agentHome: string,
   binDir: string,
   port: number,
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   const env = { ...baseEnv }
+  const pathValue = [binDir, baseEnv['PATH'] || ''].filter(Boolean).join(isWindowsPlatform(platform) ? ';' : ':')
 
   // Do not leak outer Codex session controls into the nested local supervisor.
   delete env['CODEX_CI']
@@ -199,7 +255,8 @@ export function buildLocalSupervisorEnv(
   return {
     ...env,
     HOME: agentHome,
-    PATH: `${binDir}:${baseEnv['PATH'] || ''}`,
+    ...(isWindowsPlatform(platform) ? { USERPROFILE: agentHome } : {}),
+    PATH: pathValue,
     WANMAN_URL: `http://127.0.0.1:${port}`,
     WANMAN_CONFIG: opts.configPath,
     WANMAN_WORKSPACE: opts.workspaceRoot,

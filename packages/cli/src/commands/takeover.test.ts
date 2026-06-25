@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { tmpdir } from 'node:os'
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import {
+  buildTakeoverRunOptions,
   detectLanguages,
   detectPackageManagers,
   detectFrameworks,
@@ -595,18 +596,15 @@ describe('materializeTakeoverProject', () => {
     touch('README.md', '# Local Test')
     touch('package.json', JSON.stringify({ name: 'local-test' }))
     execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' })
-    execSync('git add -A && git commit -m "init"', {
-      cwd: tmpDir,
-      stdio: 'pipe',
-      env: {
-        ...process.env,
-        GIT_AUTHOR_NAME: 'test',
-        GIT_AUTHOR_EMAIL: 'test@example.com',
-        GIT_COMMITTER_NAME: 'test',
-        GIT_COMMITTER_EMAIL: 'test@example.com',
-      },
-      shell: '/bin/bash',
-    })
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'test',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'test',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+    }
+    execFileSync('git', ['add', '-A'], { cwd: tmpDir, stdio: 'pipe', env: gitEnv })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: tmpDir, stdio: 'pipe', env: gitEnv })
 
     const profile = scanProject(tmpDir)
     const generated = generateAgentConfig(profile, undefined, 'codex')
@@ -615,13 +613,15 @@ describe('materializeTakeoverProject', () => {
     const skill = readFileSync(join(overlayDir, 'skills', 'takeover-context', 'SKILL.md'), 'utf-8')
     const agentGuide = readFileSync(join(overlayDir, 'agents', 'ceo', 'AGENT.md'), 'utf-8')
     const config = JSON.parse(readFileSync(join(overlayDir, 'agents.json'), 'utf-8')) as { gitRoot: string }
+    const normalizedSkill = skill.replace(/\\/g, '/')
+    const normalizedAgentGuide = agentGuide.replace(/\\/g, '/')
 
-    expect(skill).toContain(join(tmpDir, '.wanman', 'worktree').replace(/\\/g, '/'))
+    expect(normalizedSkill).toContain(join(tmpDir, '.wanman', 'worktree').replace(/\\/g, '/'))
     expect(skill).toContain('initiative list')
     expect(skill).toContain('capsule create')
     expect(skill).toContain('wanman initiative list')
     expect(skill).not.toContain('packages/cli/dist/index.js')
-    expect(agentGuide).toContain(join(tmpDir, '.wanman', 'skills', 'takeover-context', 'SKILL.md').replace(/\\/g, '/'))
+    expect(normalizedAgentGuide).toContain(join(tmpDir, '.wanman', 'skills', 'takeover-context', 'SKILL.md').replace(/\\/g, '/'))
     expect(agentGuide).toContain('Create at least 3 tasks in the first CEO cycle')
     expect(agentGuide).toContain('visible backlog creation is mandatory')
     expect(agentGuide).toContain('capsule create')
@@ -747,6 +747,64 @@ describe('planLocalDynamicClone', () => {
 })
 
 describe('takeoverCommand', () => {
+  it('keeps explicit finite loop counts for takeover runs', () => {
+    const opts = buildTakeoverRunOptions('Goal', ['--loops', '2'])
+
+    expect(opts.infinite).toBe(false)
+    expect(opts.loops).toBe(2)
+  })
+
+  it('defaults takeover runs to infinite mode when no run mode is supplied', () => {
+    const opts = buildTakeoverRunOptions('Goal', ['--poll', '5'])
+
+    expect(opts.infinite).toBe(true)
+    expect(opts.loops).toBe(Infinity)
+    expect(opts.pollInterval).toBe(5)
+  })
+
+  it('keeps explicit infinite mode for takeover runs', () => {
+    const opts = buildTakeoverRunOptions('Goal', ['--infinite', '--poll', '5'])
+
+    expect(opts.infinite).toBe(true)
+    expect(opts.loops).toBe(Infinity)
+    expect(opts.pollInterval).toBe(5)
+  })
+
+  it('prints help when invoked without a project path', async () => {
+    const logs: string[] = []
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((message = '') => {
+      logs.push(String(message))
+    })
+
+    try {
+      await takeoverCommand([])
+    } finally {
+      logSpy.mockRestore()
+    }
+
+    expect(logs.join('\n')).toContain('wanman takeover - Take over an existing git repo')
+    expect(logs.join('\n')).toContain('--loops <n>')
+  })
+
+  it('fails fast when the takeover path does not exist', async () => {
+    const errors: string[] = []
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation((message = '') => {
+      errors.push(String(message))
+    })
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code ?? 0}`)
+    }) as never)
+
+    try {
+      await expect(takeoverCommand([join(tmpDir, 'missing-project')])).rejects.toThrow('process.exit:1')
+    } finally {
+      errorSpy.mockRestore()
+      exitSpy.mockRestore()
+    }
+
+    expect(errors.join('\n')).toContain(`Error: path does not exist: ${join(tmpDir, 'missing-project')}`)
+  })
+
   it('runs a local dry-run takeover and writes tier-based local overlay config', async () => {
     execSync('git init', { cwd: tmpDir, stdio: 'ignore' })
     execSync('git config user.email test@example.com', { cwd: tmpDir, stdio: 'ignore' })

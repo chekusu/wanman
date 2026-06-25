@@ -10,6 +10,7 @@
 
 import * as fs from 'node:fs'
 import type { AgentRuntime } from '@wanman/core'
+import type { RunOptions } from '@wanman/host-sdk'
 import {
   type GeneratedAgentConfig,
   type ProjectDocument,
@@ -138,6 +139,12 @@ function hasExplicitRunMode(runArgs: string[]): boolean {
   return runArgs.includes('--infinite') || runArgs.includes('--loops')
 }
 
+/** @internal exported for testing */
+export function buildTakeoverRunOptions(previewGoal: string, runArgs: string[]): RunOptions {
+  const normalizedRunArgs = hasExplicitRunMode(runArgs) ? runArgs : ['--infinite', ...runArgs]
+  return parseOptions([previewGoal, ...normalizedRunArgs]).opts
+}
+
 function printProjectSummary(profile: ProjectProfile, generated: GeneratedAgentConfig): void {
   console.log('\n  Project Profile:')
   console.log(`    Languages:   ${profile.languages.join(', ') || 'none'}`)
@@ -175,13 +182,8 @@ export async function takeoverCommand(args: string[]): Promise<void> {
   const profile = scanProject(projectPath)
   const generated = generateAgentConfig(profile, goalOverride, runtime)
   const previewGoal = generated.goal
-  const normalizedRunArgs = hasExplicitRunMode(runArgs) ? runArgs : ['--infinite', ...runArgs]
-  const { opts } = parseOptions([previewGoal, ...normalizedRunArgs])
+  const opts = buildTakeoverRunOptions(previewGoal, runArgs)
   printProjectSummary(profile, generated)
-
-  // Force infinite mode for takeover (parseOptions already sets loops=Infinity when --infinite)
-  opts.infinite = true
-  opts.loops = Infinity
 
   const overlayDir = materializeLocalTakeoverProject(profile, generated, { enableBrain: !opts.noBrain })
 
