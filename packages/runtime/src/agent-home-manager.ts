@@ -15,6 +15,19 @@ const DEFAULT_HOME_ENTRIES = [
   '.kube',
 ] as const
 
+function isWindowsLinkPrivilegeError(error: unknown): error is NodeJS.ErrnoException {
+  if (!error || typeof error !== 'object') return false
+  const code = (error as NodeJS.ErrnoException).code
+  return code === 'EPERM' || code === 'EACCES'
+}
+
+function windowsLinkGuidance(target: string): Error {
+  return new Error(
+    `wanman runtime could not prepare the Windows agent home link at ${target}. `
+    + 'Enable Windows Developer Mode or run wanman inside WSL2 or Linux/macOS.',
+  )
+}
+
 export class AgentHomeManager {
   private baseHome: string
   private homesRoot: string
@@ -73,12 +86,40 @@ export class AgentHomeManager {
     if (!fs.existsSync(source)) return
     fs.rmSync(target, { recursive: true, force: true })
     const stat = fs.statSync(source)
-    fs.symlinkSync(source, target, stat.isDirectory() ? 'dir' : 'file')
+    if (!stat.isDirectory()) {
+      try {
+        fs.symlinkSync(source, target, 'file')
+      } catch (error) {
+        if (process.platform === 'win32' && isWindowsLinkPrivilegeError(error)) {
+          throw windowsLinkGuidance(target)
+        }
+        throw error
+      }
+      return
+    }
+
+    try {
+      fs.symlinkSync(source, target, 'dir')
+    } catch (error) {
+      if (process.platform === 'win32' && isWindowsLinkPrivilegeError(error)) {
+        fs.symlinkSync(source, target, 'junction')
+        return
+      }
+      throw error
+    }
   }
 
   private linkSkillsDir(target: string, source: string): void {
     fs.rmSync(target, { recursive: true, force: true })
-    fs.symlinkSync(source, target, 'dir')
+    try {
+      fs.symlinkSync(source, target, 'dir')
+    } catch (error) {
+      if (process.platform === 'win32' && isWindowsLinkPrivilegeError(error)) {
+        fs.symlinkSync(source, target, 'junction')
+        return
+      }
+      throw error
+    }
   }
 
   private ensureEmptySkillsDir(agentHome: string): string {
