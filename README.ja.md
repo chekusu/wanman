@@ -45,9 +45,13 @@ pnpm --filter @wanman/cli standalone
 node packages/cli/dist/wanman.mjs takeover /path/to/any/git/repo
 ```
 
+`pnpm build` は workspace の各パッケージをビルドし、通常の CLI エントリポイント `packages/cli/dist/index.js` を生成します。上記の単一ファイル bundle は `pnpm --filter @wanman/cli standalone` を実行したときだけ生成されます。
+
 `wanman` がすでに `PATH` にある場合は、対象リポジトリ内で `wanman takeover .` を直接実行できます。
 
 完全な手順は [`docs/quickstart.ja.md`](docs/quickstart.ja.md) を参照してください。
+
+takeover モードでは、作業は task 単位の capsule と `wanman/<task-slug>` ブランチで進みます。Dev エージェントは coverage メモ付きの PR を作成し、CTO の review gate は変更対象ファイルで 95% 以上の coverage です。
 
 ## CLI コマンド
 
@@ -136,7 +140,7 @@ pnpm test
 pnpm exec vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.exclude='**/dist/**'
 ```
 
-現在のカバレッジ目標は、行カバレッジ 90% 以上です。直近のローカル検証では `Lines: 90.17%` でした。機械可読のサマリーは `coverage/coverage-summary.json` に出力されます。
+takeover 作業では、上記コマンドの coverage サマリーを PR 本文に添付してください。現在の merge gate は変更対象ファイルで 95% 以上の coverage で、機械可読のリポジトリ全体サマリーは `coverage/coverage-summary.json` に出力されます。
 
 ## プロジェクト構造
 
