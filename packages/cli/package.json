@@ -15,10 +15,11 @@
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "standalone": "node build-standalone.mjs",
     "standalone:linux": "node build-standalone.mjs --linux",
     "standalone:all": "node build-standalone.mjs --all",
-    "clean": "rm -rf dist"
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\""
   },
   "dependencies": {
     "@wanman/core": "workspace:*",

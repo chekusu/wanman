@@ -9,7 +9,8 @@
     "build": "turbo build",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
-    "clean": "turbo clean && rm -rf node_modules"
+    "test:coverage": "vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.exclude=**/dist/**",
+    "clean": "turbo clean && node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('node_modules', { recursive: true, force: true });\""
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",

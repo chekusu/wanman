@@ -16,7 +16,8 @@
     "dev": "tsx src/web/dev-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "test:coverage": "vitest run --coverage",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\""
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
