@@ -135,26 +135,57 @@ describe('spawnCodexExec', () => {
   });
 
   it('uses runuser when a root supervisor runs an agent as another user', () => {
-    const getuid = process.getuid ? vi.spyOn(process, 'getuid').mockReturnValue(0) : undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'getuid');
+    Object.defineProperty(process, 'getuid', {
+      value: vi.fn(() => 0),
+      configurable: true,
+    });
     const proc = createMockProc();
     spawnMock.mockReturnValue(proc);
+
+    try {
+      spawnCodexExec({
+        runtime: 'codex',
+        model: 'gpt-5.4',
+        systemPrompt: 'System prompt',
+        cwd: '/tmp/work',
+        runAsUser: 'agent',
+      });
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'runuser',
+        expect.arrayContaining(['-u', 'agent', '--', 'codex']),
+        expect.objectContaining({
+          env: expect.objectContaining({ HOME: '/home/agent' }),
+        }),
+      );
+    } finally {
+      if (descriptor) Object.defineProperty(process, 'getuid', descriptor);
+      else delete (process as NodeJS.Process & { getuid?: () => number }).getuid;
+    }
+  });
+
+  it('preserves the existing shell on Windows', () => {
+    const proc = createMockProc();
+    spawnMock.mockReturnValue(proc);
+    const previousShell = process.env['SHELL'];
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    process.env['SHELL'] = 'C:\\Windows\\System32\\cmd.exe';
 
     spawnCodexExec({
       runtime: 'codex',
       model: 'gpt-5.4',
       systemPrompt: 'System prompt',
       cwd: '/tmp/work',
-      runAsUser: 'agent',
     });
 
-    expect(spawnMock).toHaveBeenCalledWith(
-      'runuser',
-      expect.arrayContaining(['-u', 'agent', '--', 'codex']),
-      expect.objectContaining({
-        env: expect.objectContaining({ HOME: '/home/agent' }),
-      }),
-    );
-    getuid?.mockRestore();
+    const options = spawnMock.mock.calls[0]![2] as { env: Record<string, string | undefined> };
+    expect(options.env.SHELL).toBe('C:\\Windows\\System32\\cmd.exe');
+    expect(options.env.SHELL).not.toBe('/bin/bash');
+
+    platformSpy.mockRestore();
+    if (previousShell === undefined) delete process.env['SHELL'];
+    else process.env['SHELL'] = previousShell;
   });
 
   it('passes fast mode through as service_tier and fast_mode config overrides', () => {

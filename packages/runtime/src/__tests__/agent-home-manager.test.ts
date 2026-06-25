@@ -1,13 +1,14 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentHomeManager } from '../agent-home-manager.js'
 
 const tempRoots: string[] = []
 
 describe('AgentHomeManager', () => {
   afterEach(() => {
+    vi.restoreAllMocks()
     for (const root of tempRoots.splice(0)) {
       fs.rmSync(root, { recursive: true, force: true })
     }
@@ -45,6 +46,18 @@ describe('AgentHomeManager', () => {
     expect(fs.readdirSync(claudeSkills)).toHaveLength(0)
   })
 
+  it('skips missing runtime roots while preparing the agent home', () => {
+    const { baseHome, homesRoot } = createFixture()
+    fs.rmSync(path.join(baseHome, '.codex'), { recursive: true, force: true })
+    const manager = new AgentHomeManager(baseHome, homesRoot)
+
+    const agentHome = manager.prepareAgentHome('partial-runtime')
+
+    expect(fs.existsSync(path.join(agentHome, '.claude', '.credentials.json'))).toBe(true)
+    expect(fs.existsSync(path.join(agentHome, '.codex', 'config.json'))).toBe(false)
+    expect(fs.lstatSync(path.join(agentHome, '.codex', 'skills')).isSymbolicLink()).toBe(true)
+  })
+
   it('cleans up all prepared homes', () => {
     const { baseHome, homesRoot } = createFixture()
     const manager = new AgentHomeManager(baseHome, homesRoot)
@@ -54,6 +67,113 @@ describe('AgentHomeManager', () => {
 
     manager.cleanupHomes()
     expect(fs.existsSync(homesRoot)).toBe(false)
+  })
+
+  it('falls back to junction links for directories when Windows symlink privileges are missing', () => {
+    const { baseHome, homesRoot, snapshotPath } = createFixture()
+    const manager = new AgentHomeManager(baseHome, homesRoot)
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    const originalSymlinkSync = fs.symlinkSync.bind(fs)
+    const symlinkSpy = vi.spyOn(fs, 'symlinkSync').mockImplementation((target, path, type) => {
+      if (type === 'dir') {
+        const error = Object.assign(new Error('missing symlink privilege'), { code: 'EPERM' })
+        throw error
+      }
+      return originalSymlinkSync(target, path, type)
+    })
+
+    manager.prepareAgentHome('windows', {
+      id: 'snapshot-2',
+      runId: 'run-2',
+      agent: 'windows',
+      activationScope: 'task',
+      materializedPath: snapshotPath,
+      resolvedSkills: [],
+    })
+
+    expect(symlinkSpy.mock.calls.some(([, , type]) => type === 'junction')).toBe(true)
+    platformSpy.mockRestore()
+  })
+
+  it('throws actionable guidance when Windows file symlinks are blocked', () => {
+    const { baseHome, homesRoot } = createFixture()
+    const manager = new AgentHomeManager(baseHome, homesRoot)
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    const originalSymlinkSync = fs.symlinkSync.bind(fs)
+    vi.spyOn(fs, 'symlinkSync').mockImplementation((target, path, type) => {
+      if (type === 'file') {
+        const error = Object.assign(new Error('missing symlink privilege'), { code: 'EACCES' })
+        throw error
+      }
+      return originalSymlinkSync(target, path, type)
+    })
+
+    expect(() => manager.prepareAgentHome('windows-file')).toThrow(
+      /Enable Windows Developer Mode or run wanman inside WSL2 or Linux\/macOS/,
+    )
+
+    platformSpy.mockRestore()
+  })
+
+  it('rethrows file link errors outside Windows privilege handling', () => {
+    const { baseHome, homesRoot } = createFixture()
+    const manager = new AgentHomeManager(baseHome, homesRoot)
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    const originalSymlinkSync = fs.symlinkSync.bind(fs)
+    const expected = new Error('file symlink failed')
+    vi.spyOn(fs, 'symlinkSync').mockImplementation((target, linkPath, type) => {
+      if (type === 'file' && String(linkPath).endsWith('.npmrc')) {
+        throw expected
+      }
+      return originalSymlinkSync(target, linkPath, type)
+    })
+
+    expect(() => manager.prepareAgentHome('linux-file')).toThrow(expected)
+
+    platformSpy.mockRestore()
+  })
+
+  it('rethrows directory link errors outside Windows privilege handling', () => {
+    const { baseHome, homesRoot } = createFixture()
+    const manager = new AgentHomeManager(baseHome, homesRoot)
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    const originalSymlinkSync = fs.symlinkSync.bind(fs)
+    const expected = new Error('dir symlink failed')
+    vi.spyOn(fs, 'symlinkSync').mockImplementation((target, linkPath, type) => {
+      if (type === 'dir' && String(linkPath).endsWith('.config')) {
+        throw expected
+      }
+      return originalSymlinkSync(target, linkPath, type)
+    })
+
+    expect(() => manager.prepareAgentHome('linux-dir')).toThrow(expected)
+
+    platformSpy.mockRestore()
+  })
+
+  it('rethrows skills link errors outside Windows privilege handling', () => {
+    const { baseHome, homesRoot, snapshotPath } = createFixture()
+    const manager = new AgentHomeManager(baseHome, homesRoot)
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    const originalSymlinkSync = fs.symlinkSync.bind(fs)
+    const expected = new Error('skills symlink failed')
+    vi.spyOn(fs, 'symlinkSync').mockImplementation((target, linkPath, type) => {
+      if (type === 'dir' && String(linkPath).endsWith(`${path.sep}skills`)) {
+        throw expected
+      }
+      return originalSymlinkSync(target, linkPath, type)
+    })
+
+    expect(() => manager.prepareAgentHome('linux-skills', {
+      id: 'snapshot-3',
+      runId: 'run-3',
+      agent: 'linux-skills',
+      activationScope: 'task',
+      materializedPath: snapshotPath,
+      resolvedSkills: [],
+    })).toThrow(expected)
+
+    platformSpy.mockRestore()
   })
 })
 
