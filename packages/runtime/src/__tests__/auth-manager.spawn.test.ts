@@ -104,6 +104,24 @@ describe('AuthManager spawn-backed flows', () => {
     expect(manager.getLoginStatus('codex').status).toBe('authenticated')
   })
 
+  it('strips terminal color sequences from captured Codex login details', async () => {
+    const child = makeChild()
+    spawnMock.mockReturnValueOnce(child)
+    const manager = new AuthManager()
+    const result = manager.startLogin('codex')
+
+    child.stdout.emit('data', Buffer.from(
+      'Open \u001b[94mhttps://auth.openai.com/device\u001b[0m and enter \u001b[94mABCD-12345\u001b[0m',
+    ))
+
+    await expect(result).resolves.toEqual({
+      name: 'codex',
+      status: 'pending',
+      loginUrl: 'https://auth.openai.com/device',
+      loginCode: 'ABCD-12345',
+    })
+  })
+
   it('returns an error when login spawn fails before printing a URL', async () => {
     const child = makeChild()
     spawnMock.mockReturnValueOnce(child)
