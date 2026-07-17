@@ -16,6 +16,24 @@ This walks through a complete first-run of wanman against any git repo on your m
 Optional:
 - A `@sandbank.dev/db9` brain adapter, if you want cross-run memory — see [architecture.md](architecture.md#brain--persistence).
 
+### GitHub permissions for automated PRs
+
+For repositories hosted on GitHub, takeover resolves the authenticated host `gh` token before creating the isolated agent home. The startup preflight and all agents use that exact token. Takeover stops before starting agents if the credential cannot read repository metadata, push branches, create and read pull requests, or read Actions runs.
+
+For classic personal access tokens or OAuth tokens:
+
+- **`repo`** for private repositories, or **`public_repo`** for public repositories.
+- **`workflow`** when agents must add or edit files under `.github/workflows/`.
+
+For fine-grained personal access tokens and GitHub App installation tokens, grant access to the target repository and at least:
+
+- **Contents: write** — push task branches.
+- **Pull requests: write** — create and update PRs.
+- **Actions: read** — inspect CI status.
+- **Workflows: write** when agents must add or edit files under `.github/workflows/`.
+
+The PR-write check uses GitHub's create-PR authorization path with a nonexistent branch as both head and base. The expected validation response proves the token reached the write-protected endpoint, while the invalid same-branch request cannot create a PR.
+
 ## 2. Clone, install, build
 
 ```bash

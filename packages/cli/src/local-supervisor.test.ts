@@ -1,13 +1,14 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildLocalSupervisorEnv,
   createHomeLayout,
   createLocalLogBuffer,
   installSharedSkills,
   resolveCliEntrypoint,
+  resolveGitHubToken,
   resolveRuntimeEntrypoint,
   syncHomeEntry,
 } from './local-supervisor.js'
@@ -215,5 +216,33 @@ describe('buildLocalSupervisorEnv', () => {
     expect(env['CODEX_CI']).toBeUndefined()
     expect(env['CODEX_SANDBOX_NETWORK_DISABLED']).toBeUndefined()
     expect(env['CODEX_THREAD_ID']).toBeUndefined()
+  })
+
+  it('passes a resolved GitHub token to isolated agents', () => {
+    const env = buildLocalSupervisorEnv({ PATH: '/usr/bin' }, {
+      configPath: '/tmp/agents.json',
+      workspaceRoot: '/tmp/agents',
+      gitRoot: '/tmp/repo',
+      sharedSkillsDir: '/tmp/skills',
+      homeRoot: '/tmp/home-root',
+    }, '/tmp/home', '/tmp/bin', 3333, 'secret-token')
+
+    expect(env['GH_TOKEN']).toBe('secret-token')
+  })
+})
+
+describe('resolveGitHubToken', () => {
+  it('prefers an explicitly inherited token', () => {
+    const reader = vi.fn(() => 'keyring-token')
+    expect(resolveGitHubToken({ GH_TOKEN: 'env-token' }, reader)).toBe('env-token')
+    expect(reader).not.toHaveBeenCalled()
+  })
+
+  it('reads the host gh keyring before HOME isolation', () => {
+    expect(resolveGitHubToken({ HOME: '/host' }, () => ' keyring-token\n')).toBe('keyring-token')
+  })
+
+  it('continues without GitHub auth when gh is unavailable', () => {
+    expect(resolveGitHubToken({}, () => { throw new Error('missing') })).toBeUndefined()
   })
 })

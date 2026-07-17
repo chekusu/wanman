@@ -3,6 +3,8 @@ import * as path from 'node:path'
 import { execSync } from 'node:child_process'
 import logUpdate from 'log-update'
 import type { RunOptions } from './execution-session.js'
+import { assertGitHubPreflight } from './github-preflight.js'
+import { resolveGitHubToken } from './local-supervisor.js'
 import { runLocalSupervisorSession } from './local-supervisor-session.js'
 import {
   createTakeoverCoordinationBackend,
@@ -498,6 +500,8 @@ export async function runLocal(
   const sharedSkillsDir = path.join(wanmanDir, 'skills')
   fs.writeFileSync(liveDashboardPath, 'takeover starting...\n')
   warnLocalEnvironment(profile, worktreePath)
+  const githubToken = profile.githubRemote ? resolveGitHubToken(process.env) : undefined
+  assertGitHubPreflight(profile.githubRemote, githubToken)
 
   console.log('\n  Starting supervisor locally...')
   console.log(`  Config:     ${configPath}`)
@@ -520,6 +524,7 @@ export async function runLocal(
       runtime: generated.runtime,
       codexModel: opts.codexModel,
       codexReasoningEffort: opts.codexReasoningEffort,
+      githubToken,
     },
     keep: opts.keep,
     signalMode: 'forward_only',

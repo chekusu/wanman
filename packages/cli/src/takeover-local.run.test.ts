@@ -9,6 +9,8 @@ import type { GeneratedAgentConfig, ProjectProfile } from './takeover-project.js
 const execSyncMock = vi.hoisted(() => vi.fn())
 const runLocalSupervisorSessionMock = vi.hoisted(() => vi.fn())
 const renderDashboardMock = vi.hoisted(() => vi.fn())
+const resolveGitHubTokenMock = vi.hoisted(() => vi.fn(() => 'agent-token'))
+const assertGitHubPreflightMock = vi.hoisted(() => vi.fn())
 
 vi.mock('node:child_process', () => ({
   execSync: execSyncMock,
@@ -16,6 +18,14 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('./local-supervisor-session.js', () => ({
   runLocalSupervisorSession: runLocalSupervisorSessionMock,
+}))
+
+vi.mock('./local-supervisor.js', () => ({
+  resolveGitHubToken: resolveGitHubTokenMock,
+}))
+
+vi.mock('./github-preflight.js', () => ({
+  assertGitHubPreflight: assertGitHubPreflightMock,
 }))
 
 vi.mock('./tui/dashboard.js', async importOriginal => {
@@ -177,10 +187,43 @@ describe('runLocal', () => {
         gitRoot: worktree,
         runtime: 'codex',
         codexModel: 'gpt-test',
+        githubToken: 'agent-token',
       }),
       keep: false,
       signalMode: 'forward_only',
     }))
+    expect(assertGitHubPreflightMock).toHaveBeenCalledWith(profile.githubRemote, 'agent-token')
     expect(fs.readFileSync(path.join(wanmanDir, 'live-dashboard.txt'), 'utf-8')).toContain('Implement')
+  })
+
+  it('does not start agents when the GitHub preflight fails', async () => {
+    assertGitHubPreflightMock.mockImplementationOnce(() => {
+      throw new Error('GitHub preflight failed: Pull requests: write')
+    })
+
+    const project = makeTmpDir()
+    const wanmanDir = path.join(project, '.wanman')
+    fs.mkdirSync(path.join(wanmanDir, 'worktree'), { recursive: true })
+    fs.mkdirSync(path.join(wanmanDir, 'agents'), { recursive: true })
+    fs.mkdirSync(path.join(wanmanDir, 'skills'), { recursive: true })
+
+    const profile = {
+      path: project,
+      packageManagers: [],
+      githubRemote: 'https://github.com/acme/app.git',
+    } as unknown as ProjectProfile
+
+    await expect(runLocal(profile, { runtime: 'codex', goal: 'Ship', agents: [] } as unknown as GeneratedAgentConfig, wanmanDir, {
+      loops: 1,
+      pollInterval: 0,
+      output: path.join(project, 'out'),
+      keep: false,
+      noBrain: true,
+      infinite: false,
+      errorLimit: 1,
+      runtime: 'codex',
+    })).rejects.toThrow('Pull requests: write')
+
+    expect(runLocalSupervisorSessionMock).not.toHaveBeenCalled()
   })
 })

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import type { AgentMatrixConfig } from '@wanman/core'
 import type { AgentRuntime } from '@wanman/core'
@@ -19,6 +19,8 @@ export interface LocalSupervisorOptions {
   runtime?: AgentRuntime
   codexModel?: string
   codexReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+  /** Exact GitHub credential already preflighted for takeover agents. */
+  githubToken?: string
   /** @internal test/embedded override; defaults to the built runtime entrypoint. */
   runtimeEntrypoint?: string
   /** @internal test/embedded override; defaults to the current CLI entrypoint. */
@@ -181,6 +183,31 @@ export function createHomeLayout(
   return { agentHome, binDir }
 }
 
+type GitHubTokenReader = (env: NodeJS.ProcessEnv) => string
+
+function readHostGitHubToken(env: NodeJS.ProcessEnv): string {
+  return execFileSync('gh', ['auth', 'token', '-h', 'github.com'], {
+    encoding: 'utf-8',
+    env,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 5000,
+  }).trim()
+}
+
+/** Resolve GitHub auth before HOME is replaced with the isolated agent home. */
+export function resolveGitHubToken(
+  baseEnv: NodeJS.ProcessEnv,
+  readToken: GitHubTokenReader = readHostGitHubToken,
+): string | undefined {
+  const inherited = baseEnv['GH_TOKEN']?.trim() || baseEnv['GITHUB_TOKEN']?.trim()
+  if (inherited) return inherited
+  try {
+    return readToken(baseEnv).trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** @internal exported for testing */
 export function buildLocalSupervisorEnv(
   baseEnv: NodeJS.ProcessEnv,
@@ -188,6 +215,7 @@ export function buildLocalSupervisorEnv(
   agentHome: string,
   binDir: string,
   port: number,
+  githubToken?: string,
 ): NodeJS.ProcessEnv {
   const env = { ...baseEnv }
 
@@ -206,6 +234,7 @@ export function buildLocalSupervisorEnv(
     WANMAN_SKILLS: opts.workspaceRoot,
     WANMAN_GIT_ROOT: opts.gitRoot,
     WANMAN_SHARED_SKILLS: opts.sharedSkillsDir,
+    ...(githubToken ? { GH_TOKEN: githubToken } : {}),
     ...(opts.goal ? { WANMAN_GOAL: opts.goal } : {}),
     ...(opts.runtime ? { WANMAN_RUNTIME: opts.runtime } : {}),
     ...(opts.codexModel ? { WANMAN_CODEX_MODEL: opts.codexModel } : {}),
@@ -225,11 +254,12 @@ export async function startLocalSupervisor(opts: LocalSupervisorOptions): Promis
   })
   installSharedSkills(opts.sharedSkillsDir, agentHome)
 
+  const githubToken = opts.githubToken ?? resolveGitHubToken(process.env)
   const logBuffer = createLocalLogBuffer()
   const child = spawn('node', [entrypoint], {
     cwd: opts.gitRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: buildLocalSupervisorEnv(process.env, opts, agentHome, binDir, port),
+    env: buildLocalSupervisorEnv(process.env, opts, agentHome, binDir, port, githubToken),
   })
   child.stdout?.on('data', chunk => logBuffer.pushChunk(chunk))
   child.stderr?.on('data', chunk => logBuffer.pushChunk(chunk))
