@@ -580,6 +580,44 @@ describe('Supervisor', () => {
   })
 
   describe('handleRpcAsync — task.create', () => {
+    it('admits at most one of two simultaneous tasks with an overlapping scope', async () => {
+      const [first, second] = await Promise.all([
+        supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+          title: 'Concurrent writer A',
+          scope: { paths: ['src/shared.ts'] },
+        })),
+        supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+          title: 'Concurrent writer B',
+          scope: { paths: ['src/shared.ts'] },
+        })),
+      ])
+
+      const accepted = [first, second].filter(response => response.error === undefined)
+      const rejected = [first, second].filter(response => response.error !== undefined)
+      expect(accepted).toHaveLength(1)
+      expect(rejected).toHaveLength(1)
+      expect(rejected[0]?.error?.message).toMatch(/conflicts with active task/i)
+
+      const list = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_LIST))
+      expect((list.result as { tasks: unknown[] }).tasks).toHaveLength(1)
+    })
+
+    it('admits two simultaneous tasks with disjoint scopes', async () => {
+      const replies = await Promise.all([
+        supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+          title: 'Independent writer A',
+          scope: { paths: ['src/a.ts'] },
+        })),
+        supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
+          title: 'Independent writer B',
+          scope: { paths: ['src/b.ts'] },
+        })),
+      ])
+      expect(replies.every(response => response.error === undefined)).toBe(true)
+      const list = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_LIST))
+      expect((list.result as { tasks: unknown[] }).tasks).toHaveLength(2)
+    })
+
     it('rejects conflicting scoped tasks', async () => {
       const first = await supervisor.handleRpcAsync(rpc(RPC_METHODS.TASK_CREATE, {
         title: 'Update runtime transport',

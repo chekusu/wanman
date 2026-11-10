@@ -1026,16 +1026,7 @@ ${activePaths}`;
           return createRpcError(req.id, RPC_ERRORS.INVALID_PARAMS, `Capsule "${capsuleId}" not found`);
         }
         const normalizedScope = scope || { paths: [] };
-        const conflicts = await this.taskPool.checkConflict(normalizedScope);
-        if (conflicts.length > 0) {
-          const conflictIds = conflicts.map(task => task.id.slice(0, 8)).join(', ');
-          return createRpcError(
-            req.id,
-            RPC_ERRORS.INVALID_PARAMS,
-            `Task scope conflicts with active task(s): ${conflictIds}`,
-          );
-        }
-        const task = await this.taskPool.create({
+        const admission = this.taskPool.createIfUnconflicted({
           title,
           description: description || '',
           scope: normalizedScope,
@@ -1048,6 +1039,16 @@ ${activePaths}`;
           scopeType,
           executionProfile,
         });
+        const conflicts = admission.conflicts;
+        if (conflicts.length > 0) {
+          const conflictIds = conflicts.map(task => task.id.slice(0, 8)).join(', ');
+          return createRpcError(
+            req.id,
+            RPC_ERRORS.INVALID_PARAMS,
+            `Task scope conflicts with active task(s): ${conflictIds}`,
+          );
+        }
+        const task = admission.task!;
         if (assignee) {
           await this.taskPool.update(task.id, { status: 'assigned', assignee, executionProfile });
           // Auto-notify: send a message to the assigned agent so it knows about the task
