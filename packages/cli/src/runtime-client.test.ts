@@ -65,6 +65,18 @@ describe('createLocalRuntimeClient', () => {
     expect(methods).toEqual(['task.list', 'initiative.list', 'capsule.list', 'artifact.list']);
   });
 
+  it('counts the raw artifact rows returned by the local supervisor', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ result: [
+      { id: 3, agent: 'dev', kind: 'patch', path: 'src/main' },
+      { id: 2, agent: 'ceo', kind: 'note', path: 'release/brief' },
+      { id: 1, agent: 'dev', kind: 'patch', path: 'src/test' },
+    ] }))
+    expect(await createLocalRuntimeClient(3120).listArtifacts()).toEqual([
+      { agent: 'ceo', kind: 'note', cnt: 1 },
+      { agent: 'dev', kind: 'patch', cnt: 2 },
+    ])
+  })
+
   it('sends mutation RPC methods', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(jsonResponse({ result: { ok: true } }));

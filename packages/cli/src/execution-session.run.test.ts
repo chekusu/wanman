@@ -103,13 +103,17 @@ describe('runExecutionSession', () => {
       codexReasoningEffort: 'high',
     }, {
       sourceLabel: 'test',
+      threadSync: { threadId: 'fixture-story' },
     }, {
       hostEnv: {
         PATH: process.env['PATH'],
         WANMAN_RUNTIME: 'claude',
+        WANMAN_SYNC_URL: 'https://example.invalid',
       },
     })
 
+    expect(capturedParams?.hostEnv?.WANMAN_SYNC_URL).toBe('https://example.invalid')
+    expect(capturedParams?.spec.threadSync).toEqual({ threadId: 'fixture-story' })
     expect(capturedParams).toBeDefined()
     expect(capturedParams?.runtime).toEqual({
       runtime: 'codex',
@@ -159,8 +163,14 @@ describe('runExecutionSession', () => {
         ]),
       }
 
-      await params.downloadDeliverables(runtime as never, params.opts.output, params.localLayout.workspaceRoot)
-      await params.downloadRepoPatch(params.opts.output, params.localLayout.gitRoot)
+      await params.downloadDeliverables(runtime as never, params.opts.output, params.localLayout.workspaceRoot, params.brainName, params.runId)
+      vi.useFakeTimers()
+      try {
+        vi.setSystemTime(new Date('2040-01-01'))
+        await params.downloadRepoPatch(params.opts.output, params.localLayout.gitRoot, params.runId)
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     await runExecutionSession('Export run output', {
