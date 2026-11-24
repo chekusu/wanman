@@ -45,7 +45,10 @@ function makeParams(overrides: Partial<LocalRunExecutorParams> = {}): LocalRunEx
 
 describe('runLocalExecution', () => {
   it('runs observation, downloads outputs, and cleans up when the supervisor stops', async () => {
-    const params = makeParams()
+    const params = makeParams({
+      hostEnv: { WANMAN_SYNC_URL: 'https://example.invalid' },
+      spec: { threadSync: { threadId: 'story-test' } },
+    })
     runLocalSupervisorSessionMock.mockImplementationOnce(async (session: RunLocalSupervisorSessionParams) => {
       const context = {
         supervisor: { endpoint: 'http://127.0.0.1:3333' },
@@ -66,6 +69,8 @@ describe('runLocalExecution', () => {
 
     expect(runLocalSupervisorSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       supervisor: expect.objectContaining({
+        hostEnv: params.hostEnv,
+        threadSync: params.spec.threadSync,
         configPath: '/tmp/run/agents.json',
         workspaceRoot: '/tmp/run/agents',
         gitRoot: '/tmp/repo',
@@ -78,8 +83,8 @@ describe('runLocalExecution', () => {
       runId: 'run-1',
       workspaceRoot: '/tmp/run/agents',
     }))
-    expect(params.downloadDeliverables).toHaveBeenCalledWith(expect.any(Object), '/tmp/out', '/tmp/run/agents', undefined)
-    expect(params.downloadRepoPatch).toHaveBeenCalledWith('/tmp/out', '/tmp/repo', undefined)
+    expect(params.downloadDeliverables).toHaveBeenCalledWith(expect.any(Object), '/tmp/out', '/tmp/run/agents', undefined, 'run-1')
+    expect(params.downloadRepoPatch).toHaveBeenCalledWith('/tmp/out', '/tmp/repo', 'run-1')
     expect(params.localLayout.cleanup).toHaveBeenCalled()
   })
 

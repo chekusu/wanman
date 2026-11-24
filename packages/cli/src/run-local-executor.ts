@@ -32,6 +32,7 @@ export interface LocalRunObservationParams {
 }
 
 export interface LocalRunExecutorParams {
+  hostEnv?: NodeJS.ProcessEnv
   goal: string
   opts: RunOptions
   spec: ProjectRunSpec
@@ -41,8 +42,8 @@ export interface LocalRunExecutorParams {
   brainName?: string
   hooks?: ExecutionHooks
   observeExecution(params: LocalRunObservationParams): Promise<unknown>
-  downloadDeliverables(runtime: RuntimeClient, outputDir: string, workspaceRoot: string, brainName?: string): Promise<void>
-  downloadRepoPatch(outputDir: string, repoRoot: string, brainName?: string): Promise<void>
+  downloadDeliverables(runtime: RuntimeClient, outputDir: string, workspaceRoot: string, brainName?: string, runId?: string): Promise<void>
+  downloadRepoPatch(outputDir: string, repoRoot: string, runId?: string): Promise<void>
 }
 
 export async function runLocalExecution(params: LocalRunExecutorParams): Promise<void> {
@@ -60,6 +61,8 @@ export async function runLocalExecution(params: LocalRunExecutorParams): Promise
   console.log('  [3/4] Starting local supervisor...')
   await runLocalSupervisorSession({
     supervisor: {
+      hostEnv: params.hostEnv,
+      threadSync: spec.threadSync,
       configPath: localLayout.configPath,
       workspaceRoot: localLayout.workspaceRoot,
       gitRoot: localLayout.gitRoot,
@@ -85,8 +88,8 @@ export async function runLocalExecution(params: LocalRunExecutorParams): Promise
     onError: async (err, { runtime: supervisorRuntime }) => {
       console.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}`)
       process.exitCode = 1
-      try { await params.downloadDeliverables(supervisorRuntime, opts.output, localLayout.workspaceRoot, brainName) } catch { /* best-effort */ }
-      try { await params.downloadRepoPatch(opts.output, localLayout.gitRoot, brainName) } catch { /* best-effort */ }
+      try { await params.downloadDeliverables(supervisorRuntime, opts.output, localLayout.workspaceRoot, brainName, runId) } catch { /* best-effort */ }
+      try { await params.downloadRepoPatch(opts.output, localLayout.gitRoot, runId) } catch { /* best-effort */ }
     },
     onStopped: (_context, reason) => {
       localLayout.cleanup()
@@ -111,8 +114,8 @@ export async function runLocalExecution(params: LocalRunExecutorParams): Promise
         shouldStop: () => isShuttingDown(),
       })
 
-      await params.downloadDeliverables(supervisorRuntime, opts.output, localLayout.workspaceRoot, brainName)
-      await params.downloadRepoPatch(opts.output, localLayout.gitRoot, brainName).catch(() => undefined)
+      await params.downloadDeliverables(supervisorRuntime, opts.output, localLayout.workspaceRoot, brainName, runId)
+      await params.downloadRepoPatch(opts.output, localLayout.gitRoot, runId).catch(() => undefined)
     },
   })
 }

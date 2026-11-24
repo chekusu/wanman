@@ -76,6 +76,8 @@ describe('startLocalSupervisor', () => {
 
     const handle = await startLocalSupervisor({
       ...layout,
+      hostEnv: { PATH: process.env.PATH, WANMAN_SYNC_URL: 'https://configured.invalid', WANMAN_SYNC_SECRET: 'fixture' },
+      threadSync: { threadId: 'sdk-story' },
       goal: 'ship it',
       runtime: 'codex',
       codexModel: 'gpt-test',
@@ -99,6 +101,9 @@ describe('startLocalSupervisor', () => {
         WANMAN_WORKSPACE: layout.workspaceRoot,
         WANMAN_GIT_ROOT: layout.gitRoot,
         WANMAN_SHARED_SKILLS: layout.sharedSkillsDir,
+        WANMAN_STORY_ID: 'sdk-story',
+        WANMAN_SYNC_URL: 'https://configured.invalid',
+        WANMAN_SYNC_SECRET: 'fixture',
         WANMAN_GOAL: 'ship it',
         WANMAN_RUNTIME: 'codex',
         WANMAN_CODEX_MODEL: 'gpt-test',

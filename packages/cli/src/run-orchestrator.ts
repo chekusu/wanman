@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { AgentMatrixConfig, AgentRuntime } from '@wanman/core'
@@ -66,7 +67,7 @@ export function getRunSourceLabel(
 export function buildRunBrainName(goal: string): string {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16)
   const slug = goal.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase() || 'goal'
-  return `wanman-run-${ts}-${slug}`
+  return `wanman-run-${ts}-${slug}-${randomBytes(8).toString('hex')}`
 }
 
 export function normalizeRuntime(value?: string | null): AgentRuntime {
@@ -105,7 +106,7 @@ export function createRunSessionPlan(args: {
 }): RunSessionPlan {
   const env = args.env ?? process.env
   const brainName = args.db9Token ? buildRunBrainName(args.goal) : undefined
-  const runId = brainName || `run-${Date.now().toString(36)}`
+  const runId = brainName || `run-${Date.now().toString(36)}-${randomBytes(8).toString('hex')}`
   const useThirdPartyApi = !!env['ANTHROPIC_BASE_URL']
   const useHybrid = !!args.opts.workerUrl
   const runtimeOverride = args.opts.runtime ?? env['WANMAN_RUNTIME']
