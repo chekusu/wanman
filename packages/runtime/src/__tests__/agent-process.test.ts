@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
+import { getEventListeners } from 'node:events'
 import type { AgentDefinition } from '@wanman/core'
 import { MessageStore } from '../message-store.js'
 import { Relay } from '../relay.js'
@@ -110,12 +111,6 @@ vi.mock('../logger.js', () => ({
   }),
 }))
 
-function makeRelay(): Relay {
-  const db = new Database(':memory:')
-  const store = new MessageStore(db)
-  return new Relay(store)
-}
-
 function makeDef(overrides?: Partial<AgentDefinition>): AgentDefinition {
   return {
     name: 'test-agent',
@@ -128,6 +123,7 @@ function makeDef(overrides?: Partial<AgentDefinition>): AgentDefinition {
 
 describe('AgentProcess', () => {
   let relay: Relay
+  let store: MessageStore
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -138,7 +134,8 @@ describe('AgentProcess', () => {
     exitReporters = []
     resumeMissedFlags = []
     spawnCallCount = 0
-    relay = makeRelay()
+    store = new MessageStore(new Database(':memory:'))
+    relay = new Relay(store)
   })
 
   describe('buildGoalPrompt', () => {
@@ -367,7 +364,85 @@ describe('AgentProcess', () => {
     })
   })
 
+  it('releases abort listeners across idle loop ticks', async () => {
+    vi.useFakeTimers()
+    const listen = vi.spyOn(AbortSignal.prototype, 'addEventListener')
+    const agent = new AgentProcess(makeDef({ lifecycle: '24/7' }), relay, '/tmp',
+      undefined, undefined, undefined, undefined, undefined, undefined, () => false)
+    try {
+      await agent.start()
+      await vi.advanceTimersByTimeAsync(30_001)
+      const signal = listen.mock.contexts.find(context => context instanceof AbortSignal)!
+      expect(getEventListeners(signal, 'abort')).toHaveLength(1)
+      agent.stop()
+      expect(getEventListeners(signal, 'abort')).toHaveLength(0)
+    } finally {
+      agent.stop()
+      listen.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   describe('trigger — on-demand', () => {
+    it('returns the original message to the mailbox after failed preparation', async () => {
+      const prepare = vi.fn().mockRejectedValueOnce(new Error('temporary setup failure')).mockResolvedValue('ready')
+      const agent = new AgentProcess(makeDef(), relay, '/tmp', undefined, {}, undefined, prepare)
+      const id = relay.send('alice', 'test-agent', 'message', 'original message', 'normal')
+      await expect(agent.trigger()).rejects.toThrow('temporary setup failure')
+      expect(agent.state).toBe('idle')
+      expect(store.getPending('test-agent').map(message => message.id)).toEqual([id])
+
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[0].resolve(0)
+      await agent.trigger()
+      expect(relay.countPending('test-agent')).toBe(0)
+      expect(spawnCallCount).toBe(1)
+    })
+
+    it('keeps a stopped startup from spawning after asynchronous preparation completes', async () => {
+      const ready = deferred<string>()
+      const prepare = vi.fn(() => ready.promise)
+      const agent = new AgentProcess(makeDef(), relay, '/tmp', undefined, {}, undefined, prepare)
+      const id = relay.send('alice', 'test-agent', 'message', 'wait for setup', 'normal')
+      const running = agent.trigger()
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalled())
+      agent.stop()
+      expect(store.getPending('test-agent').map(message => message.id)).toEqual([id])
+      ready.resolve('ready')
+      await running
+      expect(agent.state).toBe('stopped')
+      expect(spawnCallCount).toBe(0)
+      expect(store.getPending('test-agent').map(message => message.id)).toEqual([id])
+    })
+
+    it('honors a pause while the child is being prepared', async () => {
+      const ready = deferred<string>()
+      const prepare = vi.fn(() => ready.promise)
+      const agent = new AgentProcess(makeDef(), relay, '/tmp', undefined, {}, undefined, prepare)
+      relay.send('alice', 'test-agent', 'message', 'pause during setup', 'normal')
+      const running = agent.trigger()
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalled())
+      agent.pause()
+      ready.resolve('ready')
+      await new Promise(resolve => setImmediate(resolve))
+      expect(spawnCallCount).toBe(0)
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[0].resolve(0)
+      agent.resume()
+      await running
+      expect(spawnCallCount).toBe(1)
+      expect(agent.state).toBe('idle')
+    })
+
+    it('recovers after a background steer cannot read the mailbox', async () => {
+      const agent = new AgentProcess(makeDef(), relay, '/tmp')
+      relay.send('alice', 'test-agent', 'message', 'keep queued', 'steer')
+      vi.spyOn(relay, 'recv').mockImplementationOnce(() => { throw new Error('mailbox unavailable') })
+      agent.handleSteer()
+      await vi.waitFor(() => expect(agent.state).toBe('idle'))
+      expect(relay.countPending('test-agent')).toBe(1)
+    })
+
     it('should spawn when there are pending messages', async () => {
       waitDeferreds[0] = deferred<number>()
       waitDeferreds[0].resolve(0)

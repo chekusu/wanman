@@ -8,6 +8,8 @@ export type NewMessageCallback = (agentName: string, priority: MessagePriority) 
 export interface MessageTransport {
   send(from: string, to: string, type: string, payload: unknown, priority: MessagePriority): string;
   recv(agent: string, limit?: number): MaybePromise<AgentMessage[]>;
+  /** Return an undelivered startup batch to its original position when no process was started. */
+  restorePending?(ids: string[]): void;
   hasSteer(agent: string): boolean;
   countPending(agent: string): number;
   setSteerCallback(cb: SteerCallback): void;

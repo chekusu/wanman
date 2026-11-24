@@ -120,6 +120,14 @@ export class MessageStore {
     }));
   }
 
+  /** Undo delivery of a batch that failed before the runtime handed it to a child. */
+  restorePending(ids: string[]): void {
+    const restore = this.db.prepare('UPDATE messages SET delivered = 0 WHERE id = ?');
+    this.db.transaction(() => {
+      for (const id of ids) restore.run(id);
+    })();
+  }
+
   /** Mark a message as delivered. */
   markDelivered(id: string): void {
     this.deliverStmt.run(id);
