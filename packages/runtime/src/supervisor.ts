@@ -688,14 +688,6 @@ ${activePaths}`;
   private initCronScheduler(): void {
     this.cronScheduler = new CronScheduler((agentName, expression) => {
       this.relay.send('system', agentName, 'cron', { expression }, 'normal');
-      // For idle agents (on-demand / idle_cached), also trigger them
-      const agent = this.agents.get(agentName);
-      if (
-        agent
-        && (agent.definition.lifecycle === 'on-demand' || agent.definition.lifecycle === 'idle_cached')
-      ) {
-        agent.handleSteer();
-      }
     });
   }
 
