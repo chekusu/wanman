@@ -364,6 +364,34 @@ describe('AgentProcess', () => {
     })
   })
 
+  it('retries the held batch if SQLite cannot restore its delivery flag', async () => {
+    vi.useFakeTimers()
+    const db = new Database(':memory:')
+    const mailbox = new Relay(new MessageStore(db))
+    const prepare = vi.fn().mockRejectedValueOnce(new Error('temporary preparation failure')).mockResolvedValue('ready')
+    const agent = new AgentProcess(makeDef({ lifecycle: '24/7' }), mailbox, '/tmp',
+      undefined, undefined, undefined, prepare, undefined, undefined, () => false)
+    db.exec("CREATE TRIGGER unavailable BEFORE UPDATE ON messages WHEN NEW.delivered = 0 BEGIN SELECT RAISE(ABORT, 'unavailable'); END")
+    mailbox.send('alice', 'test-agent', 'message', 'retry this message', 'normal')
+    try {
+      await agent.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(agent.state).toBe('error')
+      expect(spawnCallCount).toBe(0)
+      db.exec('DROP TRIGGER unavailable')
+      waitDeferreds[0] = deferred<number>()
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(spawnCallCount).toBe(1)
+      expect(agent.state).toBe('running')
+      waitDeferreds[0].resolve(0)
+    } finally {
+      agent.stop()
+      await vi.advanceTimersByTimeAsync(0)
+      db.close()
+      vi.useRealTimers()
+    }
+  })
+
   it('releases abort listeners across idle loop ticks', async () => {
     vi.useFakeTimers()
     const listen = vi.spyOn(AbortSignal.prototype, 'addEventListener')
@@ -397,6 +425,19 @@ describe('AgentProcess', () => {
       await agent.trigger()
       expect(relay.countPending('test-agent')).toBe(0)
       expect(spawnCallCount).toBe(1)
+    })
+
+    it('retains the startup batch when an asynchronous transport cannot restore it', async () => {
+      vi.spyOn(relay, 'restorePending').mockImplementationOnce(async () => { throw new Error('mailbox offline') })
+      const prepare = vi.fn().mockRejectedValueOnce(new Error('preparation failed')).mockResolvedValue('ready')
+      const agent = new AgentProcess(makeDef(), relay, '/tmp', undefined, {}, undefined, prepare)
+      relay.send('alice', 'test-agent', 'message', 'retry with original batch', 'normal')
+      await expect(agent.trigger()).rejects.toThrow('preparation failed')
+      waitDeferreds[0] = deferred<number>()
+      waitDeferreds[0].resolve(0)
+      await agent.trigger()
+      expect(spawnCallCount).toBe(1)
+      expect(agent.state).toBe('idle')
     })
 
     it('keeps a stopped startup from spawning after asynchronous preparation completes', async () => {
@@ -630,6 +671,29 @@ describe('AgentProcess', () => {
       expect(calls[1]![0].resumeSessionId).toBe('about-to-go-stale')
       // Spawn 3: cold-start retry after the resume miss
       expect(calls[2]![0].resumeSessionId).toBeUndefined()
+    })
+
+    it('restores the batch if the missing-session fallback fails before launch', async () => {
+      const { spawnClaudeCode } = await import('../claude-code.js')
+      const agent = new AgentProcess(makeDef({ lifecycle: 'idle_cached' }), relay, '/tmp')
+      waitDeferreds[0] = deferred<number>()
+      relay.send('alice', 'test-agent', 'message', 'initial session', 'normal')
+      const first = agent.trigger()
+      await vi.waitFor(() => expect(sessionIdReporters[0]).toBeDefined())
+      sessionIdReporters[0]!('expired')
+      waitDeferreds[0]!.resolve(0)
+      await first
+
+      waitDeferreds[1] = deferred<number>()
+      const id = relay.send('alice', 'test-agent', 'message', 'needs a cold start', 'normal')
+      const second = agent.trigger()
+      await vi.waitFor(() => expect(spawnCallCount).toBe(2))
+      setSpawnResumeMissed(1, true)
+      vi.mocked(spawnClaudeCode).mockImplementationOnce(() => { throw new Error('cannot launch') })
+      waitDeferreds[1]!.resolve(1)
+      await expect(second).rejects.toThrow('cannot launch')
+      expect(agent.state).toBe('idle')
+      expect(store.getPending('test-agent').map(message => message.id)).toEqual([id])
     })
 
     it('handleSteer triggers idle_cached agents the same way it triggers on-demand', async () => {

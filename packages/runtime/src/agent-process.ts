@@ -100,6 +100,7 @@ export class AgentProcess {
   private extraEnv: Record<string, string>;
   private currentProcess: AgentRunHandle | null = null;
   private startupMessages: AgentMessage[] = [];
+  private restoringMessages?: Promise<void>;
   private releasePausedStartup?: () => void;
   private triggerActive = false;
   private _state: AgentState = 'idle';
@@ -215,6 +216,7 @@ export class AgentProcess {
   }
 
   private async receiveForStartup(limit: number): Promise<AgentMessage[]> {
+    if (this.restoringMessages) await this.restoringMessages;
     // Transports without durable redelivery retain a failed batch in this process.
     if (!this.startupMessages.length) {
       this.startupMessages = await this.relay.recv(this.definition.name, limit);
@@ -222,10 +224,26 @@ export class AgentProcess {
     return this.startupMessages;
   }
 
-  private restoreStartupMessages(): void {
-    if (this.startupMessages.length && this.relay.restorePending) {
-      this.relay.restorePending(this.startupMessages.map(message => message.id));
+  private restoreStartupMessages(): Promise<void> | void {
+    if (this.restoringMessages) return this.restoringMessages;
+    if (!this.startupMessages.length || !this.relay.restorePending) return;
+    const onFailure = (error: unknown) => {
+      // Keep the batch locally if the durable mailbox is temporarily unwritable.
+      log.error('could not restore agent startup messages', {
+        agent: this.definition.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    };
+    try {
+      const restored = this.relay.restorePending(this.startupMessages.map(message => message.id));
+      if (restored) {
+        this.restoringMessages = restored.then(() => { this.startupMessages = []; }, onFailure)
+          .finally(() => { this.restoringMessages = undefined; });
+        return this.restoringMessages;
+      }
       this.startupMessages = [];
+    } catch (error) {
+      onFailure(error);
     }
   }
 
@@ -383,9 +401,9 @@ export class AgentProcess {
         // Wait before respawning
         await sleep(RESPAWN_DELAY_MS, signal);
       } catch (err) {
-        this.restoreStartupMessages();
+        await this.restoreStartupMessages();
         if (signal.aborted) break;
-        this._state = 'error';
+        if (this.state !== 'paused') this._state = 'error';
         log.error('agent loop error', {
           agent: this.definition.name,
           error: err instanceof Error ? err.message : String(err),
@@ -393,7 +411,7 @@ export class AgentProcess {
         await sleep(RESPAWN_DELAY_MS, signal);
       }
     }
-    this.restoreStartupMessages();
+    await this.restoreStartupMessages();
   }
 
   /**
@@ -437,9 +455,9 @@ export class AgentProcess {
     try {
       await this.runTriggered();
     } finally {
+      await this.restoreStartupMessages();
       this.triggerActive = false;
       this.setIdleIfActive();
-      this.restoreStartupMessages();
     }
     if (this.state === 'idle' && this.relay.countPending(this.definition.name) > 0) {
       this.triggerInBackground();
@@ -505,8 +523,7 @@ export class AgentProcess {
     // idle_cached fallback: if Claude reported the resumed session is missing,
     // retry once without resume so we don't strand the agent.
     if (
-      !this.isStopped()
-      && this.definition.lifecycle === 'idle_cached'
+      this.definition.lifecycle === 'idle_cached'
       && resumeSessionId
       && this.lastSpawnResumeMissed
     ) {
@@ -516,6 +533,10 @@ export class AgentProcess {
       });
       this.lastSessionId = null;
       this.lastSpawnResumeMissed = false;
+      // The adapter explicitly rejected the session before delivering this prompt.
+      this.startupMessages = pending;
+      if (this._state === 'paused') await this.waitForResume();
+      if (this.isStopped()) return;
       exitCode = await this.runOneShot({
         runtime, model, reasoningEffort, fast, prompt, runEnv,
       });
