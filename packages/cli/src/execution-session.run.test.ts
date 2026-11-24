@@ -138,6 +138,23 @@ describe('runExecutionSession', () => {
     expect(renderDashboardMock).toHaveBeenCalled()
   })
 
+  it.each([true, false])('honors noBrain=%s for a project with a configured database', async (noBrain) => {
+    const project = makeTmpDir()
+    const output = makeTmpDir()
+    const brain = { token: '${DB9_TOKEN}', dbName: 'project-fixture' }
+    const file = path.join(project, 'agents.json')
+    fs.writeFileSync(file, JSON.stringify({ agents: [], brain }))
+    runLocalExecutionMock.mockImplementation(async (params: LocalRunExecutorParams) => {
+      const localized = JSON.parse(fs.readFileSync(params.localLayout.configPath, 'utf8'))
+      expect(localized.brain).toEqual(noBrain ? undefined : brain)
+    })
+
+    await runExecutionSession('fixture', {
+      loops: 1, pollInterval: 0, output, keep: false, noBrain, infinite: false, errorLimit: 1,
+    }, { projectDir: project }, { hostEnv: {} })
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).brain).toEqual(brain)
+  })
+
   it('exports deliverables, task snapshots, and local repo patches from the local layout', async () => {
     const output = makeTmpDir()
     let workspaceFile = ''
