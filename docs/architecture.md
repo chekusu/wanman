@@ -178,7 +178,7 @@ All of these are just SQLite tables under a single `wanman.db`, reachable via JS
 Two asynchronous inputs to the matrix besides agent-to-agent messages:
 
 - **`POST /events`** — an external system (CI, a webhook, a human script) pushes an `ExternalEvent` object. The supervisor iterates agents and, for any whose `definition.events[]` includes the event type, enqueues a follow-up message with the serialized payload.
-- **CronScheduler** — runs every 60 seconds, checks each agent's `cron` expression, and fires a follow-up message (plus a `handleSteer()` for on-demand agents) when it matches. Standard 5-field cron: `min hour dom mon dow`.
+- **CronScheduler** — runs every 60 seconds, checks each agent's `cron` expression, and queues a normal follow-up when it matches. Idle on-demand agents use the regular message wake-up path, and running agents drain their backlog after finishing. Standard 5-field cron: `min hour dom mon dow`.
 
 These are the two seams where wanman plugs into "the rest of your infrastructure" without hard-coding any particular webhook provider.
 
