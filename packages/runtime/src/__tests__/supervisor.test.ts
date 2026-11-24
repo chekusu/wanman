@@ -67,6 +67,25 @@ function rpc(method: string, params?: Record<string, unknown>): JsonRpcRequest {
   return { jsonrpc: '2.0', id: 1, method, params }
 }
 
+function setStorySyncEnv(): () => void {
+  const previousEnv = {
+    WANMAN_SYNC_URL: process.env['WANMAN_SYNC_URL'],
+    WANMAN_SYNC_SECRET: process.env['WANMAN_SYNC_SECRET'],
+    WANMAN_STORY_ID: process.env['WANMAN_STORY_ID'],
+  }
+  process.env['WANMAN_SYNC_URL'] = 'https://api.example.com/api/sync'
+  process.env['WANMAN_SYNC_SECRET'] = 'sync-secret'
+  process.env['WANMAN_STORY_ID'] = 'story-1'
+  return () => {
+    if (previousEnv.WANMAN_SYNC_URL === undefined) delete process.env['WANMAN_SYNC_URL']
+    else process.env['WANMAN_SYNC_URL'] = previousEnv.WANMAN_SYNC_URL
+    if (previousEnv.WANMAN_SYNC_SECRET === undefined) delete process.env['WANMAN_SYNC_SECRET']
+    else process.env['WANMAN_SYNC_SECRET'] = previousEnv.WANMAN_SYNC_SECRET
+    if (previousEnv.WANMAN_STORY_ID === undefined) delete process.env['WANMAN_STORY_ID']
+    else process.env['WANMAN_STORY_ID'] = previousEnv.WANMAN_STORY_ID
+  }
+}
+
 describe('Supervisor', () => {
   let supervisor: Supervisor
   let tempWorkspace: string
@@ -814,6 +833,78 @@ describe('Supervisor', () => {
         else process.env['WANMAN_SYNC_SECRET'] = previousEnv.WANMAN_SYNC_SECRET
         if (previousEnv.WANMAN_STORY_ID === undefined) delete process.env['WANMAN_STORY_ID']
         else process.env['WANMAN_STORY_ID'] = previousEnv.WANMAN_STORY_ID
+        fetchSpy.mockRestore()
+      }
+    })
+
+    it('waits for the story artifact sync attempt before returning artifact.put', async () => {
+      const executeSQL = vi.fn().mockResolvedValue([{ id: 43, agent: 'ceo', kind: 'note' }])
+      ;(supervisor as unknown as { brainManager: unknown }).brainManager = {
+        isInitialized: true,
+        executeSQL,
+      }
+      const restoreEnv = setStorySyncEnv()
+      let resolveFetch: ((response: Response) => void) | undefined
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+        () => new Promise<Response>((resolve) => {
+          resolveFetch = resolve
+        }),
+      )
+
+      try {
+        const putPromise = supervisor.handleRpcAsync(rpc(RPC_METHODS.ARTIFACT_PUT, {
+          kind: 'note',
+          agent: 'ceo',
+          source: 'test',
+          confidence: 0.9,
+          path: 'notes/two.md',
+          content: 'hello again',
+          metadata: { topic: 'sync' },
+        }))
+        let settled = false
+        putPromise.finally(() => { settled = true })
+
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+          'https://api.example.com/api/sync/artifact',
+          expect.objectContaining({ method: 'POST' }),
+        )
+        expect(settled).toBe(false)
+
+        resolveFetch?.(new Response(null, { status: 200 }))
+        const put = await putPromise
+        expect(put.error).toBeUndefined()
+      } finally {
+        restoreEnv()
+        fetchSpy.mockRestore()
+      }
+    })
+
+    it('keeps artifact.put successful when story artifact sync fails', async () => {
+      const executeSQL = vi.fn().mockResolvedValue([{ id: 44, agent: 'ceo', kind: 'note' }])
+      ;(supervisor as unknown as { brainManager: unknown }).brainManager = {
+        isInitialized: true,
+        executeSQL,
+      }
+      const restoreEnv = setStorySyncEnv()
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('sync unavailable'))
+
+      try {
+        const put = await supervisor.handleRpcAsync(rpc(RPC_METHODS.ARTIFACT_PUT, {
+          kind: 'note',
+          agent: 'ceo',
+          source: 'test',
+          confidence: 0.9,
+          path: 'notes/three.md',
+          content: 'still stored',
+          metadata: { topic: 'sync-failure' },
+        }))
+
+        expect(put.error).toBeUndefined()
+        expect(executeSQL.mock.calls.at(-1)?.[0]).toContain('INSERT INTO artifacts')
+      } finally {
+        restoreEnv()
         fetchSpy.mockRestore()
       }
     })
