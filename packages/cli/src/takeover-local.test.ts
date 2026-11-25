@@ -10,6 +10,7 @@ import {
   buildPrNudgeSignature,
   collectPrNudgeRecipients,
   hasLocalProgress,
+  isReusableLocalWorktree,
   materializeLocalTakeoverProject,
   maybeNudgeLocalPrExecution,
   parseLocalGitStatus,
@@ -264,8 +265,290 @@ describe('materializeLocalTakeoverProject', () => {
     expect(agentsConfig.agents[0]?.model).toBe('high')
     expect(fs.readFileSync(path.join(wanmanDir, 'skills', 'takeover-context', 'SKILL.md'), 'utf-8')).toContain('Ship project')
   })
+
+  it('reuses an existing takeover worktree so restart does not discard in-flight changes', () => {
+    const repo = makeTmpDir()
+    execGit(repo, 'init')
+    execGit(repo, 'config user.email test@example.com')
+    execGit(repo, 'config user.name Test')
+    fs.writeFileSync(path.join(repo, 'README.md'), '# App\n')
+    execGit(repo, 'add README.md')
+    execGit(repo, 'commit -m init')
+
+    const profile: ProjectProfile = {
+      path: repo,
+      languages: ['typescript'],
+      packageManagers: [],
+      frameworks: [],
+      ci: [],
+      testFrameworks: [],
+      hasReadme: true,
+      hasClaudeMd: false,
+      hasDocs: false,
+      issueTracker: 'none',
+      readmeExcerpt: 'App',
+      codeRoots: ['src'],
+      packageScripts: ['test'],
+    }
+    const generated: GeneratedAgentConfig = {
+      runtime: 'codex',
+      goal: 'Ship project',
+      intent: {
+        projectName: 'app',
+        summary: 'Ship project',
+        canonicalDocs: [],
+        roadmapDocs: [],
+        codeRoots: ['src'],
+        packageScripts: ['test'],
+        strategicThemes: ['quality'],
+        mission: 'Ship project',
+      },
+      agents: [],
+    }
+
+    const wanmanDir = materializeLocalTakeoverProject(profile, generated)
+    const worktreeReadme = path.join(wanmanDir, 'worktree', 'README.md')
+    fs.writeFileSync(worktreeReadme, '# Agent WIP\n')
+
+    materializeLocalTakeoverProject(profile, generated)
+
+    expect(fs.readFileSync(worktreeReadme, 'utf-8')).toBe('# Agent WIP\n')
+    expect(execGit(path.join(wanmanDir, 'worktree'), 'status --short README.md')).toContain('M README.md')
+  })
+
+  it('blocks takeover restart before deleting a non-reusable worktree directory', () => {
+    const repo = makeTmpDir()
+    execGit(repo, 'init')
+    execGit(repo, 'config user.email test@example.com')
+    execGit(repo, 'config user.name Test')
+    fs.writeFileSync(path.join(repo, 'README.md'), '# App\n')
+    execGit(repo, 'add README.md')
+    execGit(repo, 'commit -m init')
+
+    const profile: ProjectProfile = {
+      path: repo,
+      languages: ['typescript'],
+      packageManagers: [],
+      frameworks: [],
+      ci: [],
+      testFrameworks: [],
+      hasReadme: true,
+      hasClaudeMd: false,
+      hasDocs: false,
+      issueTracker: 'none',
+      readmeExcerpt: 'App',
+      codeRoots: ['src'],
+      packageScripts: ['test'],
+    }
+    const generated: GeneratedAgentConfig = {
+      runtime: 'codex',
+      goal: 'Ship project',
+      intent: {
+        projectName: 'app',
+        summary: 'Ship project',
+        canonicalDocs: [],
+        roadmapDocs: [],
+        codeRoots: ['src'],
+        packageScripts: ['test'],
+        strategicThemes: ['quality'],
+        mission: 'Ship project',
+      },
+      agents: [],
+    }
+
+    const worktreePath = path.join(repo, '.wanman', 'worktree')
+    fs.mkdirSync(worktreePath, { recursive: true })
+    fs.writeFileSync(path.join(worktreePath, 'scratch.txt'), 'keep me')
+
+    expect(() => materializeLocalTakeoverProject(profile, generated)).toThrow(
+      /Refusing to recreate takeover worktree/,
+    )
+    expect(fs.readFileSync(path.join(worktreePath, 'scratch.txt'), 'utf-8')).toBe('keep me')
+  })
+
+  it('recreates an empty non-worktree directory before adding the takeover worktree', () => {
+    const repo = makeTmpDir()
+    execGit(repo, 'init')
+    execGit(repo, 'config user.email test@example.com')
+    execGit(repo, 'config user.name Test')
+    fs.writeFileSync(path.join(repo, 'README.md'), '# App\n')
+    execGit(repo, 'add README.md')
+    execGit(repo, 'commit -m init')
+
+    const profile: ProjectProfile = {
+      path: repo,
+      languages: ['typescript'],
+      packageManagers: [],
+      frameworks: [],
+      ci: [],
+      testFrameworks: [],
+      hasReadme: true,
+      hasClaudeMd: false,
+      hasDocs: false,
+      issueTracker: 'none',
+      readmeExcerpt: 'App',
+      codeRoots: ['src'],
+      packageScripts: ['test'],
+    }
+    const generated: GeneratedAgentConfig = {
+      runtime: 'codex',
+      goal: 'Ship project',
+      intent: {
+        projectName: 'app',
+        summary: 'Ship project',
+        canonicalDocs: [],
+        roadmapDocs: [],
+        codeRoots: ['src'],
+        packageScripts: ['test'],
+        strategicThemes: ['quality'],
+        mission: 'Ship project',
+      },
+      agents: [],
+    }
+
+    const worktreePath = path.join(repo, '.wanman', 'worktree')
+    fs.mkdirSync(worktreePath, { recursive: true })
+
+    materializeLocalTakeoverProject(profile, generated)
+
+    expect(path.normalize(execGit(worktreePath, 'rev-parse --show-toplevel'))).toBe(path.normalize(worktreePath))
+  })
+
+  it('blocks takeover restart before reusing a worktree from another git repository', () => {
+    const repo = makeTmpDir()
+    execGit(repo, 'init')
+    execGit(repo, 'config user.email test@example.com')
+    execGit(repo, 'config user.name Test')
+    fs.writeFileSync(path.join(repo, 'README.md'), '# App\n')
+    execGit(repo, 'add README.md')
+    execGit(repo, 'commit -m init')
+
+    const profile: ProjectProfile = {
+      path: repo,
+      languages: ['typescript'],
+      packageManagers: [],
+      frameworks: [],
+      ci: [],
+      testFrameworks: [],
+      hasReadme: true,
+      hasClaudeMd: false,
+      hasDocs: false,
+      issueTracker: 'none',
+      readmeExcerpt: 'App',
+      codeRoots: ['src'],
+      packageScripts: ['test'],
+    }
+    const generated: GeneratedAgentConfig = {
+      runtime: 'codex',
+      goal: 'Ship project',
+      intent: {
+        projectName: 'app',
+        summary: 'Ship project',
+        canonicalDocs: [],
+        roadmapDocs: [],
+        codeRoots: ['src'],
+        packageScripts: ['test'],
+        strategicThemes: ['quality'],
+        mission: 'Ship project',
+      },
+      agents: [],
+    }
+
+    const worktreePath = path.join(repo, '.wanman', 'worktree')
+    fs.mkdirSync(worktreePath, { recursive: true })
+    execGit(worktreePath, 'init')
+    fs.writeFileSync(path.join(worktreePath, 'foreign.txt'), 'do not reuse')
+
+    expect(() => materializeLocalTakeoverProject(profile, generated)).toThrow(
+      /Refusing to recreate takeover worktree/,
+    )
+    expect(fs.readFileSync(path.join(worktreePath, 'foreign.txt'), 'utf-8')).toBe('do not reuse')
+  })
+
+  it('blocks takeover restart when the existing worktree metadata is broken', () => {
+    const repo = makeTmpDir()
+    execGit(repo, 'init')
+    execGit(repo, 'config user.email test@example.com')
+    execGit(repo, 'config user.name Test')
+    fs.writeFileSync(path.join(repo, 'README.md'), '# App\n')
+    execGit(repo, 'add README.md')
+    execGit(repo, 'commit -m init')
+
+    const profile: ProjectProfile = {
+      path: repo,
+      languages: ['typescript'],
+      packageManagers: [],
+      frameworks: [],
+      ci: [],
+      testFrameworks: [],
+      hasReadme: true,
+      hasClaudeMd: false,
+      hasDocs: false,
+      issueTracker: 'none',
+      readmeExcerpt: 'App',
+      codeRoots: ['src'],
+      packageScripts: ['test'],
+    }
+    const generated: GeneratedAgentConfig = {
+      runtime: 'codex',
+      goal: 'Ship project',
+      intent: {
+        projectName: 'app',
+        summary: 'Ship project',
+        canonicalDocs: [],
+        roadmapDocs: [],
+        codeRoots: ['src'],
+        packageScripts: ['test'],
+        strategicThemes: ['quality'],
+        mission: 'Ship project',
+      },
+      agents: [],
+    }
+
+    const worktreePath = path.join(repo, '.wanman', 'worktree')
+    fs.mkdirSync(worktreePath, { recursive: true })
+    fs.writeFileSync(path.join(worktreePath, '.git'), 'gitdir: missing-worktree')
+    fs.writeFileSync(path.join(worktreePath, 'foreign.txt'), 'do not delete')
+
+    expect(() => materializeLocalTakeoverProject(profile, generated)).toThrow(
+      /Refusing to recreate takeover worktree/,
+    )
+    expect(fs.readFileSync(path.join(worktreePath, 'foreign.txt'), 'utf-8')).toBe('do not delete')
+  })
+
+  it('treats a missing takeover worktree path as non-reusable', () => {
+    const repo = makeTmpDir()
+    execGit(repo, 'init')
+    execGit(repo, 'config user.email test@example.com')
+    execGit(repo, 'config user.name Test')
+    fs.writeFileSync(path.join(repo, 'README.md'), '# App\n')
+    execGit(repo, 'add README.md')
+    execGit(repo, 'commit -m init')
+
+    expect(isReusableLocalWorktree(path.join(repo, '.wanman', 'worktree'), repo)).toBe(false)
+  })
+
+  it('treats a file at the takeover worktree path as non-reusable', () => {
+    const repo = makeTmpDir()
+    execGit(repo, 'init')
+    execGit(repo, 'config user.email test@example.com')
+    execGit(repo, 'config user.name Test')
+    fs.writeFileSync(path.join(repo, 'README.md'), '# App\n')
+    execGit(repo, 'add README.md')
+    execGit(repo, 'commit -m init')
+
+    const worktreePath = path.join(repo, '.wanman', 'worktree')
+    fs.mkdirSync(path.dirname(worktreePath), { recursive: true })
+    fs.writeFileSync(worktreePath, 'not a directory')
+
+    expect(isReusableLocalWorktree(worktreePath, repo)).toBe(false)
+  })
 })
 
-function execGit(cwd: string, args: string): void {
-  execSync(`git ${args}`, { cwd, stdio: 'ignore' })
+function execGit(cwd: string, args: string): string {
+  return execSync(`git ${args}`, {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim()
 }

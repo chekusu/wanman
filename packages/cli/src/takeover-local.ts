@@ -440,6 +440,49 @@ export async function maybeNudgeLocalPrExecution(
   return true
 }
 
+function readGitCommonDir(repoPath: string): string | undefined {
+  try {
+    const gitCommonDir = execSync(`git -C ${JSON.stringify(repoPath)} rev-parse --path-format=absolute --git-common-dir`, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+    if (!gitCommonDir) return undefined
+    const absolutePath = path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(repoPath, gitCommonDir)
+    return path.normalize(fs.realpathSync.native(absolutePath))
+  } catch {
+    return undefined
+  }
+}
+
+function readGitTopLevel(repoPath: string): string | undefined {
+  try {
+    const topLevel = execSync(`git -C ${JSON.stringify(repoPath)} rev-parse --show-toplevel`, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+    if (!topLevel) return undefined
+    return path.normalize(fs.realpathSync.native(topLevel))
+  } catch {
+    return undefined
+  }
+}
+
+/** @internal exported for testing */
+export function isReusableLocalWorktree(worktreePath: string, repoPath: string): boolean {
+  if (!fs.existsSync(worktreePath)) return false
+  const worktreeTopLevel = readGitTopLevel(worktreePath)
+  const worktreeCommonDir = readGitCommonDir(worktreePath)
+  const repoCommonDir = readGitCommonDir(repoPath)
+  const expectedWorktreePath = path.normalize(fs.realpathSync.native(worktreePath))
+  return (
+    !!worktreeTopLevel
+    && !!worktreeCommonDir
+    && !!repoCommonDir
+    && worktreeTopLevel === expectedWorktreePath
+    && worktreeCommonDir === repoCommonDir
+  )
+}
+
 export function materializeLocalTakeoverProject(
   profile: ProjectProfile,
   generated: GeneratedAgentConfig,
@@ -452,16 +495,37 @@ export function materializeLocalTakeoverProject(
     cwd: profile.path,
     stdio: 'pipe',
   })
-  const currentHead = execSync('git rev-parse --verify HEAD', {
-    cwd: profile.path,
-    encoding: 'utf-8',
-  }).trim()
-  fs.rmSync(worktreePath, { recursive: true, force: true })
-  execSync(`git worktree add --detach -f "${worktreePath}" ${currentHead}`, {
-    cwd: profile.path,
-    stdio: 'pipe',
-  })
-  console.log(`  [local] Created git worktree at ${worktreePath}`)
+
+  let createdWorktree = false
+  if (fs.existsSync(worktreePath)) {
+    if (isReusableLocalWorktree(worktreePath, profile.path)) {
+      console.log(`  [local] Reusing existing git worktree at ${worktreePath}`)
+    } else {
+      const entries = fs.readdirSync(worktreePath)
+      if (entries.length > 0) {
+        throw new Error(
+          `Refusing to recreate takeover worktree at ${worktreePath} because it already contains files that are not a reusable git worktree. Move or remove the existing contents before restarting takeover.`,
+        )
+      }
+      fs.rmSync(worktreePath, { recursive: true, force: true })
+    }
+  }
+
+  if (!fs.existsSync(worktreePath)) {
+    const currentHead = execSync('git rev-parse --verify HEAD', {
+      cwd: profile.path,
+      encoding: 'utf-8',
+    }).trim()
+    execSync(`git worktree add --detach -f "${worktreePath}" ${currentHead}`, {
+      cwd: profile.path,
+      stdio: 'pipe',
+    })
+    createdWorktree = true
+  }
+
+  if (createdWorktree) {
+    console.log(`  [local] Created git worktree at ${worktreePath}`)
+  }
 
   const localRuntimePaths: TakeoverRuntimePaths = {
     projectRoot: worktreePath,
