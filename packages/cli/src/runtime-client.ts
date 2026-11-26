@@ -95,7 +95,7 @@ function summarizeArtifacts(artifacts: RuntimeArtifactRecord[]): RuntimeArtifact
     const key = `${artifact.agent}:${artifact.kind}`
     const current = counts.get(key)
     if (current) current.cnt += artifact.cnt ?? 1
-    else counts.set(key, { ...artifact, cnt: artifact.cnt ?? 1 })
+    else counts.set(key, { agent: artifact.agent, kind: artifact.kind, cnt: artifact.cnt ?? 1 })
   }
   return [...counts.values()].sort((a, b) => `${a.agent}:${a.kind}`.localeCompare(`${b.agent}:${b.kind}`))
 }
@@ -151,8 +151,8 @@ export function createLocalRuntimeClient(port: number): RuntimeClient {
       return result.capsules
     },
     listArtifacts: async () => {
-      const result = await localRpc<{ artifacts: RuntimeArtifactRecord[] }>(port, 'artifact.list', {})
-      return summarizeArtifacts(result.artifacts)
+      const result = await localRpc<RuntimeArtifactRecord[] | { artifacts: RuntimeArtifactRecord[] }>(port, 'artifact.list', {})
+      return summarizeArtifacts(Array.isArray(result) ? result : result.artifacts)
     },
     createInitiative: async input => {
       await localRpc(port, 'initiative.create', input)

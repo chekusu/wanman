@@ -56,6 +56,10 @@ export class Relay {
     return messages;
   }
 
+  restorePending(ids: string[]): void {
+    this.messageStore.restorePending(ids);
+  }
+
   /** Check if an agent has pending steer messages. */
   hasSteer(agent: string): boolean {
     return this.messageStore.hasSteer(agent);

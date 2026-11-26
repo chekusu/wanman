@@ -103,13 +103,17 @@ describe('runExecutionSession', () => {
       codexReasoningEffort: 'high',
     }, {
       sourceLabel: 'test',
+      threadSync: { threadId: 'fixture-story' },
     }, {
       hostEnv: {
         PATH: process.env['PATH'],
         WANMAN_RUNTIME: 'claude',
+        WANMAN_SYNC_URL: 'https://example.invalid',
       },
     })
 
+    expect(capturedParams?.hostEnv?.WANMAN_SYNC_URL).toBe('https://example.invalid')
+    expect(capturedParams?.spec.threadSync).toEqual({ threadId: 'fixture-story' })
     expect(capturedParams).toBeDefined()
     expect(capturedParams?.runtime).toEqual({
       runtime: 'codex',
@@ -132,6 +136,23 @@ describe('runExecutionSession', () => {
     expect(fs.existsSync(path.join(output, 'loop-events.ndjson'))).toBe(true)
     expect(fs.existsSync(path.join(output, 'meta.json'))).toBe(true)
     expect(renderDashboardMock).toHaveBeenCalled()
+  })
+
+  it.each([true, false])('honors noBrain=%s for a project with a configured database', async (noBrain) => {
+    const project = makeTmpDir()
+    const output = makeTmpDir()
+    const brain = { token: '${DB9_TOKEN}', dbName: 'project-fixture' }
+    const file = path.join(project, 'agents.json')
+    fs.writeFileSync(file, JSON.stringify({ agents: [], brain }))
+    runLocalExecutionMock.mockImplementation(async (params: LocalRunExecutorParams) => {
+      const localized = JSON.parse(fs.readFileSync(params.localLayout.configPath, 'utf8'))
+      expect(localized.brain).toEqual(noBrain ? undefined : brain)
+    })
+
+    await runExecutionSession('fixture', {
+      loops: 1, pollInterval: 0, output, keep: false, noBrain, infinite: false, errorLimit: 1,
+    }, { projectDir: project }, { hostEnv: {} })
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).brain).toEqual(brain)
   })
 
   it('exports deliverables, task snapshots, and local repo patches from the local layout', async () => {
@@ -159,8 +180,14 @@ describe('runExecutionSession', () => {
         ]),
       }
 
-      await params.downloadDeliverables(runtime as never, params.opts.output, params.localLayout.workspaceRoot)
-      await params.downloadRepoPatch(params.opts.output, params.localLayout.gitRoot)
+      await params.downloadDeliverables(runtime as never, params.opts.output, params.localLayout.workspaceRoot, params.brainName, params.runId)
+      vi.useFakeTimers()
+      try {
+        vi.setSystemTime(new Date('2040-01-01'))
+        await params.downloadRepoPatch(params.opts.output, params.localLayout.gitRoot, params.runId)
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     await runExecutionSession('Export run output', {

@@ -153,7 +153,7 @@ RPC メソッド: `context.get`、`context.set`、`context.list`。`set` は ups
 エージェント間メッセージ以外に、matrix への非同期入力は 2 つあります:
 
 - **`POST /events`** — 外部システム（CI、webhook、人間のスクリプト）が `ExternalEvent` オブジェクトを push します。スーパーバイザーはエージェントを走査し、`definition.events[]` にそのイベントタイプを含むものに対して、シリアライズされたペイロードを持つ follow-up メッセージをキューイングします。
-- **CronScheduler** — 60 秒ごとに実行され、各エージェントの `cron` 式をチェックし、マッチしたら follow-up メッセージを発火します（on-demand エージェントには `handleSteer()` も併せて）。標準的な 5 フィールド cron: `min hour dom mon dow`。
+- **CronScheduler** — 60 秒ごとに実行され、各エージェントの `cron` 式をチェックし、マッチしたら通常の follow-up メッセージをキューに追加します。待機中の on-demand エージェントは通常のメッセージ経路で起動し、実行中のエージェントは作業終了後にキューを処理します。標準的な 5 フィールド cron: `min hour dom mon dow`。
 
 これらが、特定の webhook プロバイダをハードコードすることなく、wanman を「残りのインフラ」に繋ぐ 2 つの接続面です。
 

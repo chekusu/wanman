@@ -21,6 +21,7 @@ import {
 } from './agent-adapter.js';
 import { type CredentialManager } from './credential-manager.js';
 import { createLogger } from './logger.js';
+import type { AgentMessage } from '@wanman/core';
 import { resolveMaybePromise, type MessageTransport } from './runtime-contracts.js';
 
 const log = createLogger('agent-process');
@@ -98,6 +99,10 @@ export class AgentProcess {
   private credentialManager?: CredentialManager;
   private extraEnv: Record<string, string>;
   private currentProcess: AgentRunHandle | null = null;
+  private startupMessages: AgentMessage[] = [];
+  private restoringMessages?: Promise<void>;
+  private releasePausedStartup?: () => void;
+  private triggerActive = false;
   private _state: AgentState = 'idle';
   private abortController: AbortController | null = null;
 
@@ -210,8 +215,55 @@ export class AgentProcess {
     }
   }
 
+  private async receiveForStartup(limit: number): Promise<AgentMessage[]> {
+    if (this.restoringMessages) await this.restoringMessages;
+    // Transports without durable redelivery retain a failed batch in this process.
+    if (!this.startupMessages.length) {
+      this.startupMessages = await this.relay.recv(this.definition.name, limit);
+    }
+    return this.startupMessages;
+  }
+
+  private restoreStartupMessages(): Promise<void> | void {
+    if (this.restoringMessages) return this.restoringMessages;
+    if (!this.startupMessages.length || !this.relay.restorePending) return;
+    const onFailure = (error: unknown) => {
+      // Keep the batch locally if the durable mailbox is temporarily unwritable.
+      log.error('could not restore agent startup messages', {
+        agent: this.definition.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    };
+    try {
+      const restored = this.relay.restorePending(this.startupMessages.map(message => message.id));
+      if (restored) {
+        this.restoringMessages = restored.then(() => { this.startupMessages = []; }, onFailure)
+          .finally(() => { this.restoringMessages = undefined; });
+        return this.restoringMessages;
+      }
+      this.startupMessages = [];
+    } catch (error) {
+      onFailure(error);
+    }
+  }
+
+  private async waitForResume(): Promise<void> {
+    while (this._state === 'paused') {
+      await new Promise<void>(resolve => { this.releasePausedStartup = resolve; });
+    }
+  }
+
+  private triggerInBackground(): void {
+    void this.trigger().catch(error => {
+      log.error('agent trigger failed', {
+        agent: this.definition.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
   private setIdleIfActive(): void {
-    if (this._state !== 'stopped') {
+    if (this._state !== 'stopped' && this._state !== 'paused') {
       this._state = 'idle';
     }
   }
@@ -234,7 +286,8 @@ export class AgentProcess {
         }
 
         // Check for pending messages to include in the prompt
-        const pending = await resolveMaybePromise(this.relay.recv(this.definition.name, 5));
+        const pending = await this.receiveForStartup(5);
+        if (signal.aborted) break;
         if (pending.length === 0 && this.hasAutonomousWork && !this.hasAutonomousWork(this.definition.name)) {
           this._state = 'idle';
           await sleep(LOOP_DELAY_MS, signal);
@@ -263,6 +316,7 @@ export class AgentProcess {
           prompt += `\n\n${goalPrompt}`;
         }
 
+        if (signal.aborted) break;
         this._state = 'running';
         this.currentUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
         await this.credentialManager?.ensureFresh();
@@ -283,6 +337,8 @@ export class AgentProcess {
           ...(fast ? { fast: true } : {}),
         });
 
+        if (this.state === 'paused') await this.waitForResume();
+        if (signal.aborted) break;
         this.currentProcess = createAgentAdapter(runtime).startRun({
           runtime,
           model,
@@ -294,6 +350,8 @@ export class AgentProcess {
           env: runEnv,
           runAsUser: process.env['WANMAN_AGENT_USER'],
         });
+
+        this.startupMessages = [];
 
         // Log tool calls so we can see what each agent is doing
         this.registerEventLogger(this.currentProcess);
@@ -318,7 +376,7 @@ export class AgentProcess {
         if (budgetTimer) clearTimeout(budgetTimer);
         const runDuration = Date.now() - runStartTime;
         this.currentProcess = null;
-        this._state = 'idle';
+        this.setIdleIfActive();
         await this.credentialManager?.syncFromFile();
 
         log.info('agent exited', { agent: this.definition.name, exitCode });
@@ -343,8 +401,9 @@ export class AgentProcess {
         // Wait before respawning
         await sleep(RESPAWN_DELAY_MS, signal);
       } catch (err) {
+        await this.restoreStartupMessages();
         if (signal.aborted) break;
-        this._state = 'error';
+        if (this.state !== 'paused') this._state = 'error';
         log.error('agent loop error', {
           agent: this.definition.name,
           error: err instanceof Error ? err.message : String(err),
@@ -352,6 +411,7 @@ export class AgentProcess {
         await sleep(RESPAWN_DELAY_MS, signal);
       }
     }
+    await this.restoreStartupMessages();
   }
 
   /**
@@ -374,7 +434,7 @@ export class AgentProcess {
       (this.definition.lifecycle === 'on-demand' || this.definition.lifecycle === 'idle_cached')
       && this._state === 'idle'
     ) {
-      this.trigger();
+      this.triggerInBackground();
     }
   }
 
@@ -385,19 +445,32 @@ export class AgentProcess {
    * spawn is retried once without resume to force a cold-start.
    */
   async trigger(): Promise<void> {
-    if (this._state === 'running') {
-      log.warn('agent already running, ignoring trigger', { agent: this.definition.name });
+    if (this._state !== 'idle') {
+      log.debug('ignoring trigger while agent is unavailable', { agent: this.definition.name, state: this._state });
       return;
     }
 
     this._state = 'running';
+    this.triggerActive = true;
+    try {
+      await this.runTriggered();
+    } finally {
+      await this.restoreStartupMessages();
+      this.triggerActive = false;
+      this.setIdleIfActive();
+    }
+    if (this.state === 'idle' && this.relay.countPending(this.definition.name) > 0) {
+      this.triggerInBackground();
+    }
+  }
+
+  private async runTriggered(): Promise<void> {
     this.currentUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-    const pending = await resolveMaybePromise(this.relay.recv(this.definition.name, 10));
+    const pending = await this.receiveForStartup(10);
     const hasRunnableWork = pending.length === 0
       && this.hasAutonomousWork
       && this.hasAutonomousWork(this.definition.name);
     if (pending.length === 0 && !hasRunnableWork) {
-      this.setIdleIfActive();
       log.info('no pending messages, skipping trigger', { agent: this.definition.name });
       return;
     }
@@ -450,6 +523,8 @@ export class AgentProcess {
       ...(fast ? { fast: true } : {}),
     });
 
+    if (this._state === 'paused') await this.waitForResume();
+    if (this.isStopped()) return;
     let exitCode = await this.runOneShot({
       runtime, model, reasoningEffort, fast, prompt, runEnv, resumeSessionId,
     });
@@ -467,13 +542,16 @@ export class AgentProcess {
       });
       this.lastSessionId = null;
       this.lastSpawnResumeMissed = false;
+      // The adapter explicitly rejected the session before delivering this prompt.
+      this.startupMessages = pending;
+      if (this._state === 'paused') await this.waitForResume();
+      if (this.isStopped()) return;
       exitCode = await this.runOneShot({
         runtime, model, reasoningEffort, fast, prompt, runEnv,
       });
     }
 
     const runDuration = Date.now() - runStartTime;
-    this.setIdleIfActive();
     await this.credentialManager?.syncFromFile();
     log.info('agent finished', {
       agent: this.definition.name,
@@ -498,16 +576,6 @@ export class AgentProcess {
       });
     } catch { /* non-fatal */ }
     this._steerCount = 0;
-
-    // Drain backlog: if more messages arrived while we were running, re-trigger
-    const backlogCount = this.isStopped() ? 0 : this.relay.countPending(this.definition.name);
-    if (backlogCount > 0) {
-      log.info('backlog remaining after trigger, re-triggering', {
-        agent: this.definition.name,
-        pendingCount: backlogCount,
-      });
-      void this.trigger();
-    }
   }
 
   /**
@@ -633,6 +701,7 @@ export class AgentProcess {
       runAsUser: process.env['WANMAN_AGENT_USER'],
     });
 
+    this.startupMessages = [];
     this.registerEventLogger(this.currentProcess);
     this.registerSessionIdCapture(this.currentProcess);
 
@@ -678,7 +747,14 @@ export class AgentProcess {
     if (this.currentProcess?.proc?.pid) {
       try { process.kill(this.currentProcess.proc.pid, 'SIGCONT'); } catch { /* ignore */ }
     }
-    this._state = 'running';
+    if (this.definition.lifecycle !== '24/7' && !this.triggerActive) {
+      this._state = 'idle';
+      if (this.startupMessages.length || this.relay.countPending(this.definition.name)) this.triggerInBackground();
+    } else {
+      this._state = 'running';
+    }
+    this.releasePausedStartup?.();
+    this.releasePausedStartup = undefined;
     log.info('resumed', { agent: this.definition.name });
   }
 
@@ -690,6 +766,9 @@ export class AgentProcess {
       this.currentProcess = null;
     }
     this._state = 'stopped';
+    this.releasePausedStartup?.();
+    this.releasePausedStartup = undefined;
+    this.restoreStartupMessages();
     log.info('stopped', { agent: this.definition.name });
   }
 }
@@ -757,11 +836,14 @@ function pickNumber(value: unknown, keys: string[]): number | null {
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
+    const finish = () => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
       resolve();
-    }, { once: true });
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
   });
 }

@@ -4,12 +4,15 @@ import * as path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import type { AgentMatrixConfig } from '@wanman/core'
+import type { ThreadSyncSpec } from '@wanman/host-sdk'
 import type { AgentRuntime } from '@wanman/core'
 import { createLocalRuntimeClient, type RuntimeClient } from './runtime-client.js'
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 export interface LocalSupervisorOptions {
+  hostEnv?: NodeJS.ProcessEnv
+  threadSync?: ThreadSyncSpec
   configPath: string
   workspaceRoot: string
   gitRoot: string
@@ -190,6 +193,16 @@ export function buildLocalSupervisorEnv(
   port: number,
 ): NodeJS.ProcessEnv {
   const env = { ...baseEnv }
+  const sync = opts.threadSync
+  if (sync) {
+    env['WANMAN_STORY_ID'] = sync.threadId
+    if (sync.syncUrl !== undefined && sync.syncUrl !== env['WANMAN_SYNC_URL']) {
+      // The credential from the previous endpoint belongs to that endpoint.
+      env['WANMAN_SYNC_URL'] = sync.syncUrl
+      delete env['WANMAN_SYNC_SECRET']
+    }
+    if (sync.syncSecret !== undefined) env['WANMAN_SYNC_SECRET'] = sync.syncSecret
+  }
 
   // Do not leak outer Codex session controls into the nested local supervisor.
   delete env['CODEX_CI']
@@ -229,7 +242,7 @@ export async function startLocalSupervisor(opts: LocalSupervisorOptions): Promis
   const child = spawn('node', [entrypoint], {
     cwd: opts.gitRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: buildLocalSupervisorEnv(process.env, opts, agentHome, binDir, port),
+    env: buildLocalSupervisorEnv(opts.hostEnv ?? process.env, opts, agentHome, binDir, port),
   })
   child.stdout?.on('data', chunk => logBuffer.pushChunk(chunk))
   child.stderr?.on('data', chunk => logBuffer.pushChunk(chunk))

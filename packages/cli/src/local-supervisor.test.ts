@@ -183,6 +183,20 @@ describe('local supervisor home layout helpers', () => {
 })
 
 describe('buildLocalSupervisorEnv', () => {
+  it('scopes an explicit story sync endpoint and credential to this run', () => {
+    const base = { WANMAN_SYNC_URL: 'https://previous.invalid', WANMAN_SYNC_SECRET: 'previous-fixture' }
+    const opts = {
+      configPath: 'config', workspaceRoot: 'workspace', gitRoot: 'git', sharedSkillsDir: 'skills', homeRoot: 'root',
+      threadSync: { threadId: 'story', syncUrl: 'https://target.invalid' },
+    }
+    const env = buildLocalSupervisorEnv(base, opts, 'home', 'bin', 3120)
+    expect(env.WANMAN_STORY_ID).toBe('story')
+    expect(env.WANMAN_SYNC_URL).toBe('https://target.invalid')
+    expect(env.WANMAN_SYNC_SECRET).toBeUndefined()
+    expect(buildLocalSupervisorEnv(base, { ...opts, threadSync: { ...opts.threadSync, syncSecret: 'new-fixture' } }, 'home', 'bin', 3120).WANMAN_SYNC_SECRET).toBe('new-fixture')
+    expect(base.WANMAN_SYNC_SECRET).toBe('previous-fixture')
+  })
+
   it('sets local supervisor paths and strips outer Codex session controls', () => {
     const env = buildLocalSupervisorEnv({
       PATH: '/usr/bin',

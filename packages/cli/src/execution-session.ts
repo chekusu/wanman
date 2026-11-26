@@ -144,8 +144,10 @@ export function localizeRunConfigForHost(
   baseDir: string,
   workspaceRoot: string,
   gitRoot: string,
+  noBrain = false,
 ): string {
   const config = JSON.parse(configText) as Record<string, unknown>
+  if (noBrain) delete config['brain']
   config['dbPath'] = path.join(baseDir, 'wanman.db')
   config['workspaceRoot'] = workspaceRoot
   config['gitRoot'] = gitRoot
@@ -301,6 +303,7 @@ export function materializeLocalRunLayout(params: {
   embedded?: EmbeddedAssets | null
   configText: string
   gitRoot?: string
+  noBrain?: boolean
 }): LocalRunLayout {
   const baseDir = path.resolve(params.outputDir, '.wanman-local', params.runId)
   fs.rmSync(baseDir, { recursive: true, force: true })
@@ -310,7 +313,7 @@ export function materializeLocalRunLayout(params: {
   const workspaceRoot = path.join(baseDir, 'agents')
   const sharedSkillsDir = path.join(baseDir, 'shared-skills')
   const gitRoot = path.resolve(params.gitRoot ?? params.projectDir ?? params.root ?? process.cwd())
-  const localizedConfigText = localizeRunConfigForHost(params.configText, baseDir, workspaceRoot, gitRoot)
+  const localizedConfigText = localizeRunConfigForHost(params.configText, baseDir, workspaceRoot, gitRoot, params.noBrain)
 
   fs.writeFileSync(configPath, localizedConfigText)
   fs.mkdirSync(workspaceRoot, { recursive: true })
@@ -418,9 +421,10 @@ export async function downloadLocalDeliverables(
   outputDir: string,
   workspaceRoot: string,
   brainName?: string,
+  runId = brainName,
 ): Promise<void> {
   console.log('\n  Downloading deliverables...')
-  const localDir = getRunOutputDir(outputDir, brainName)
+  const localDir = getRunOutputDir(outputDir, runId)
   const hasFiles = fs.existsSync(workspaceRoot)
     && execSync(`find '${workspaceRoot}' -type f 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim()
 
@@ -445,9 +449,9 @@ export async function downloadLocalDeliverables(
 export async function downloadLocalRepoPatch(
   outputDir: string,
   repoRoot: string,
-  brainName?: string,
+  runId?: string,
 ): Promise<void> {
-  const localDir = getRunOutputDir(outputDir, brainName)
+  const localDir = getRunOutputDir(outputDir, runId)
   fs.mkdirSync(localDir, { recursive: true })
 
   const status = execSync(`git -C '${repoRoot}' status --short`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
@@ -845,6 +849,7 @@ ${codexConfigLabel ? `  │  Codex:  ${codexConfigLabel.padEnd(40)}│\n` : ''} 
   const localLayout = materializeLocalRunLayout({
     runId,
     outputDir: opts.output,
+    noBrain: opts.noBrain,
     projectDir,
     root,
     embedded,
@@ -852,6 +857,7 @@ ${codexConfigLabel ? `  │  Codex:  ${codexConfigLabel.padEnd(40)}│\n` : ''} 
     gitRoot: localGitRoot,
   })
   await runLocalExecution({
+    hostEnv,
     goal,
     opts,
     spec,

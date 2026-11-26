@@ -153,7 +153,7 @@ RPC 方法：`context.get`、`context.set`、`context.list`。`set` 是 upsert�
 除了 agent 之间的消息，matrix 还有两类异步输入：
 
 - **`POST /events`** —— 外部系统（CI、webhook、人类脚本）推送一个 `ExternalEvent` 对象。supervisor 遍历所有 agent，对任何 `definition.events[]` 包含该事件类型的 agent，把序列化后的 payload 作为 follow-up 消息塞入其收件箱。
-- **CronScheduler** —— 每 60 秒运行一次，检查每个 agent 的 `cron` 表达式，命中时触发一条 follow-up 消息（对 on-demand agent 还会额外调用一次 `handleSteer()`）。标准 5 字段 cron：`min hour dom mon dow`。
+- **CronScheduler** —— 每 60 秒运行一次，检查每个 agent 的 `cron` 表达式，命中时将普通 follow-up 消息加入队列。空闲的按需 agent 由消息通道唤醒，运行中的 agent 在当前工作结束后处理队列。标准 5 字段 cron：`min hour dom mon dow`。
 
 这两个是 wanman 与 "你基础设施其他部分" 对接的缝隙，而不把任何具体 webhook 提供方硬编码进来。
 

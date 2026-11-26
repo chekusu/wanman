@@ -109,7 +109,15 @@ describe('run orchestrator helpers', () => {
     expect(plan.runId).toBe(plan.brainName)
   })
 
-  it('generates stable brain names from goals', () => {
-    expect(buildRunBrainName('Launch beta now')).toMatch(/^wanman-run-/)
+  it('isolates two runs of the same goal started at the same time', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-06-01T10:00:00Z'))
+      const first = buildRunBrainName('Launch beta now')
+      expect(first).toMatch(/^wanman-run-/)
+      expect(buildRunBrainName('Launch beta now')).not.toBe(first)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

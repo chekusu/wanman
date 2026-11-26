@@ -89,6 +89,18 @@ describe('parseCron', () => {
     expect(schedule.minutes.size).toBe(4)
   })
 
+  it.each(['0-60', '12-8', '6-60/2', '61/2', '5x', '*/2x', '1-4-6', '*/2/2', '1,'])(
+    'rejects invalid minute field %s at registration', field => {
+      const scheduler = new CronScheduler(vi.fn())
+      expect(() => scheduler.addJob('worker', field + ' * * * *')).toThrow()
+      expect(scheduler.getJobs()).toHaveLength(0)
+    }
+  )
+
+  it('accepts Sunday as either 0 or 7, including in ranges', () => {
+    expect(parseCron('0 8 * * 6-7').daysOfWeek).toEqual(new Set([6, 0]))
+  })
+
   it('should throw on invalid expression (wrong number of fields)', () => {
     expect(() => parseCron('0 8 *')).toThrow('expected 5 fields')
   })
@@ -107,6 +119,21 @@ describe('parseCron', () => {
 // =========================================================================
 
 describe('matchesCron', () => {
+  it('allows either restricted day field to match but still requires the month and time', () => {
+    const schedule = parseCron('0 8 1 2 1')
+    expect(matchesCron(schedule, new Date(2026, 1, 1, 8))).toBe(true)  // Sunday, first of February
+    expect(matchesCron(schedule, new Date(2026, 1, 2, 8))).toBe(true)  // Monday, second of February
+    expect(matchesCron(schedule, new Date(2026, 1, 3, 8))).toBe(false)
+    expect(matchesCron(schedule, new Date(2026, 2, 1, 8))).toBe(false)
+  })
+
+  it('uses both fields when a day field starts with an asterisk', () => {
+    const schedule = parseCron('0 8 */2 * 1')
+    expect(matchesCron(schedule, new Date(2026, 1, 9, 8))).toBe(true)
+    expect(matchesCron(schedule, new Date(2026, 1, 2, 8))).toBe(false)
+    expect(matchesCron(schedule, new Date(2026, 1, 1, 8))).toBe(false)
+  })
+
   it('should match "0 8 * * *" at 08:00 on any day', () => {
     const schedule = parseCron('0 8 * * *')
     // Wednesday, Feb 26, 2026, 08:00
@@ -211,6 +238,14 @@ describe('CronScheduler', () => {
     expect(callbackMock).toHaveBeenCalledTimes(2)
     expect(callbackMock).toHaveBeenCalledWith('ceo', '0 8 * * *')
     expect(callbackMock).toHaveBeenCalledWith('finance', '0 8 * * *')
+  })
+
+  it('fires each registered job once per observed minute', () => {
+    scheduler.addJob('ceo', '* * * * *')
+    scheduler.tick(new Date(2026, 1, 26, 8, 0, 10))
+    scheduler.tick(new Date(2026, 1, 26, 8, 0, 45))
+    scheduler.tick(new Date(2026, 1, 26, 8, 1))
+    expect(callbackMock).toHaveBeenCalledTimes(2)
   })
 
   it('should handle multiple crons per agent', () => {
