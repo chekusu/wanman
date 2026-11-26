@@ -25,7 +25,7 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` produces a standalone CLI bundle at `packages/cli/dist/index.js`. Either add it to your `PATH` or use `pnpm --filter @wanman/cli exec wanman ...` during development.
+`pnpm build` compiles the workspace packages and emits the CLI entrypoint at `packages/cli/dist/index.js`. During source development, use `pnpm --filter @wanman/cli exec wanman ...`; if you need the single-file bundle, run `pnpm --filter @wanman/cli standalone` to produce `packages/cli/dist/wanman.mjs`.
 
 For local iteration you can `npm link` the CLI:
 
@@ -80,7 +80,16 @@ To read the replies (and mark them delivered):
 wanman recv --agent ceo
 ```
 
-## 5. Inspect artifacts
+## 5. Follow the takeover delivery loop
+
+Once the matrix is running, the default local takeover workflow is:
+
+1. The CEO decomposes goals into tasks and change capsules.
+2. Dev agents make scoped changes on a `wanman/<task-slug>` branch, then push a PR with coverage notes.
+3. The CTO reviews only after the PR body or CI shows at least 95% coverage on changed files.
+4. After approval, the PR merges and the task/capsule state is updated inside `.wanman/`.
+
+## 6. Inspect artifacts
 
 Agents produce structured artifacts — research summaries, plans, financial models, etc. — through `wanman artifact put`. To browse them:
 
@@ -100,7 +109,7 @@ wanman task get <task-id>
 wanman initiative list
 ```
 
-## 6. Cleanup
+## 7. Cleanup
 
 Everything wanman creates for a takeover lives under `.wanman/` inside the target repo:
 
@@ -121,7 +130,7 @@ rm -rf .wanman
 
 Your real working tree is untouched — wanman only ever wrote inside `.wanman/`.
 
-## 7. Where next
+## 8. Where next
 
 - Want to understand the JSON-RPC protocol, message priorities, and agent lifecycles? See [architecture.md](architecture.md).
 - Want to contribute? See [CONTRIBUTING.md](../CONTRIBUTING.md).

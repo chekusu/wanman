@@ -25,7 +25,7 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` 会在 `packages/cli/dist/index.js` 产出一个独立的 CLI bundle。你可以把它加入 `PATH`，或者在开发中直接用 `pnpm --filter @wanman/cli exec wanman ...`。
+`pnpm build` 会编译整个 workspace，并生成 CLI 入口 `packages/cli/dist/index.js`。在源码开发阶段，用 `pnpm --filter @wanman/cli exec wanman ...` 直接运行；如果需要单文件 bundle，再执行 `pnpm --filter @wanman/cli standalone` 生成 `packages/cli/dist/wanman.mjs`。
 
 本地迭代时可以用 `npm link` 链接该 CLI：
 
@@ -80,7 +80,16 @@ wanman send ceo --steer "Stop — focus on the API, not the landing page"
 wanman recv --agent ceo
 ```
 
-## 5. 查看 artifact
+## 5. 了解 takeover 交付循环
+
+matrix 跑起来后，默认的本地 takeover 工作流是：
+
+1. CEO 把目标拆成 task 和 change capsule。
+2. Dev agent 在 `wanman/<task-slug>` 分支上做范围受控的修改，并提交带 coverage 说明的 PR。
+3. 只有当 PR 正文或 CI 显示变更文件的 coverage 至少达到 95% 时，CTO 才会开始 review。
+4. PR 通过后合并，task 和 capsule 的状态继续记录在 `.wanman/` 中。
+
+## 6. 查看 artifact
 
 Agent 通过 `wanman artifact put` 产出结构化的 artifact —— 调研摘要、计划、财务模型等。浏览它们：
 
@@ -100,7 +109,7 @@ wanman task get <task-id>
 wanman initiative list
 ```
 
-## 6. 清理
+## 7. 清理
 
 wanman 为一次 takeover 所创建的一切都放在目标仓库内的 `.wanman/` 下：
 
@@ -121,7 +130,7 @@ rm -rf .wanman
 
 你真实的工作区毫发无损 —— wanman 只在 `.wanman/` 里写过东西。
 
-## 7. 接下来去哪里
+## 8. 接下来去哪里
 
 - 想理解 JSON-RPC 协议、消息优先级和 agent 生命周期？见 [architecture.zh.md](architecture.zh.md)。
 - 想贡献代码？见 [CONTRIBUTING.zh.md](../CONTRIBUTING.zh.md)。

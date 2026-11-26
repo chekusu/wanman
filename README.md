@@ -46,9 +46,13 @@ pnpm --filter @wanman/cli standalone
 node packages/cli/dist/wanman.mjs takeover /path/to/any/git/repo
 ```
 
+`pnpm build` compiles the workspace packages and the regular CLI entrypoint at `packages/cli/dist/index.js`. The optional single-file bundle above is produced only by `pnpm --filter @wanman/cli standalone`.
+
 If `wanman` is already on your `PATH`, you can also run `wanman takeover .` from inside the target repository.
 
 See [`docs/quickstart.md`](docs/quickstart.md) for the full walkthrough.
+
+In takeover mode, work is expected to move through task-scoped capsules and `wanman/<task-slug>` branches. Dev agents open PRs with coverage notes, and the CTO review gate is at least 95% coverage on changed files.
 
 For cost and revenue accounting, see [`docs/finops.md`](docs/finops.md). The local FinOps review app runs with `pnpm --filter @wanman/finops dev -- --host 127.0.0.1 --port 4173`.
 
@@ -139,7 +143,7 @@ pnpm test
 pnpm exec vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.exclude='**/dist/**'
 ```
 
-The current coverage target is at least 90% line coverage. The latest verified local run reports `Lines: 90.17%`; the machine-readable summary is written to `coverage/coverage-summary.json`.
+For takeover work, attach coverage from the command above to the PR body. The current merge gate is at least 95% coverage on changed files, and the machine-readable repo-wide summary is written to `coverage/coverage-summary.json`.
 
 ## Project structure
 

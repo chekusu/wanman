@@ -25,7 +25,7 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` は `packages/cli/dist/index.js` に独立した CLI バンドルを生成します。`PATH` に追加するか、開発中は `pnpm --filter @wanman/cli exec wanman ...` を使ってください。
+`pnpm build` は workspace の各パッケージをビルドし、CLI のエントリポイント `packages/cli/dist/index.js` を生成します。ソース開発中は `pnpm --filter @wanman/cli exec wanman ...` を使い、単一ファイル bundle が必要な場合だけ `pnpm --filter @wanman/cli standalone` で `packages/cli/dist/wanman.mjs` を生成してください。
 
 ローカルでの反復開発には CLI を `npm link` しておくと便利です:
 
@@ -80,7 +80,16 @@ wanman send ceo --steer "Stop — focus on the API, not the landing page"
 wanman recv --agent ceo
 ```
 
-## 5. artifact を確認する
+## 5. takeover のデリバリーループを把握する
+
+matrix の起動後、ローカル takeover の標準ワークフローは次のとおりです:
+
+1. CEO が目標を task と change capsule に分解します。
+2. Dev エージェントは `wanman/<task-slug>` ブランチでスコープ内の変更を行い、coverage メモ付きの PR を作成します。
+3. PR 本文または CI が変更対象ファイルで 95% 以上の coverage を示したときだけ、CTO が review を開始します。
+4. 承認後に PR がマージされ、task と capsule の状態は `.wanman/` に記録され続けます。
+
+## 6. artifact を確認する
 
 エージェントは `wanman artifact put` を通じて、構造化された artifact — 調査サマリ、計画、財務モデルなど — を生成します。これらを閲覧するには:
 
@@ -100,7 +109,7 @@ wanman task get <task-id>
 wanman initiative list
 ```
 
-## 6. クリーンアップ
+## 7. クリーンアップ
 
 takeover のために wanman が作成するものはすべて、対象リポジトリ内の `.wanman/` 配下にあります:
 
@@ -121,7 +130,7 @@ rm -rf .wanman
 
 あなたの実際の作業ツリーには一切触れていません — wanman は `.wanman/` の内部にしか書き込んでいません。
 
-## 7. 次のステップ
+## 8. 次のステップ
 
 - JSON-RPC プロトコル、メッセージ優先度、エージェントのライフサイクルを理解したい場合は [architecture.ja.md](architecture.ja.md) を参照してください。
 - 貢献したい場合は [CONTRIBUTING.ja.md](../CONTRIBUTING.ja.md) を参照してください。
