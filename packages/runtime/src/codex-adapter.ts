@@ -112,7 +112,7 @@ export function spawnCodexExec(opts: AgentRunOptions): AgentRunHandle {
     cwd: opts.cwd,
     env: {
       ...process.env,
-      SHELL: '/bin/bash',
+      ...(process.platform === 'win32' ? {} : { SHELL: '/bin/bash' }),
       ...(useRunuser ? { HOME: `/home/${runAsUser}` } : {}),
       DISABLE_AUTOUPDATER: '1',
       DISABLE_TELEMETRY: '1',

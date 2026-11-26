@@ -322,6 +322,27 @@ describe('spawnClaudeCode', () => {
     expect(args).not.toContain('--resume')
   })
 
+  it('should preserve the existing shell on Windows', () => {
+    const previousShell = process.env.SHELL
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    process.env.SHELL = 'C:\\Windows\\System32\\cmd.exe'
+
+    spawnClaudeCode({
+      model: 'haiku',
+      systemPrompt: 'test',
+      cwd: '/tmp',
+    })
+
+    const calls = (spawnMock as unknown as { mock: { calls: unknown[][] } }).mock.calls
+    const options = calls[calls.length - 1]![2] as { env: Record<string, string | undefined> }
+    expect(options.env.SHELL).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(options.env.SHELL).not.toBe('/bin/bash')
+
+    platformSpy.mockRestore()
+    if (previousShell === undefined) delete process.env.SHELL
+    else process.env.SHELL = previousShell
+  })
+
   it('should pass --resume <id> when resumeSessionId is set', () => {
     spawnClaudeCode({
       model: 'haiku',

@@ -160,7 +160,7 @@ export function spawnClaudeCode(opts: SpawnOptions): ClaudeCodeProcess {
     env: {
       ...process.env,
       // Force bash shell — prevents zsh glob expansion breaking paths like (auth)/
-      SHELL: '/bin/bash',
+      ...(process.platform === 'win32' ? {} : { SHELL: '/bin/bash' }),
       // Fix HOME for runuser: Claude Code needs correct home for session-env, settings, etc.
       ...(useRunuser ? { HOME: `/home/${runAsUser}` } : {}),
       DISABLE_AUTOUPDATER: '1',
