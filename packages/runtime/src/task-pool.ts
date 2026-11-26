@@ -302,7 +302,7 @@ export class TaskPool {
     return prefixRow ? rowToTask(prefixRow) : null;
   }
 
-  async create(input: TaskCreateInput): Promise<Task> {
+  private insert(input: TaskCreateInput): Task {
     const id = randomUUID();
     const now = Date.now();
     const scopeJson = JSON.stringify(input.scope);
@@ -330,6 +330,26 @@ export class TaskPool {
 
     const row = this.getByIdStmt.get(id) as TaskRow;
     return rowToTask(row);
+  }
+
+  async create(input: TaskCreateInput): Promise<Task> {
+    return this.insert(input);
+  }
+
+  /**
+   * Admit an RPC task under the same SQLite write transaction that checks its
+   * active scope. A separate read followed by await create() lets two
+   * simultaneous RPCs both see an empty active set before either inserts.
+   * IMMEDIATE also serializes competing supervisors sharing one database.
+   * The general create() helper remains unchanged for migrations/fixtures.
+   */
+  createIfUnconflicted(input: TaskCreateInput): { task?: Task; conflicts: Task[] } {
+    const admit = this.db.transaction(() => {
+      const conflicts = this.findConflicts(input.scope);
+      if (conflicts.length > 0) return { conflicts };
+      return { task: this.insert(input), conflicts: [] };
+    });
+    return admit.immediate();
   }
 
   async claim(taskId: string, agentId: string): Promise<Task> {
@@ -442,7 +462,7 @@ export class TaskPool {
     return true;
   }
 
-  async checkConflict(scope: TaskScope, excludeTaskId?: string): Promise<Task[]> {
+  private findConflicts(scope: TaskScope, excludeTaskId?: string): Task[] {
     const rows = this.activeTasksStmt.all(...ACTIVE_STATUSES) as TaskRow[];
     const conflicts: Task[] = [];
 
@@ -456,5 +476,9 @@ export class TaskPool {
     }
 
     return conflicts;
+  }
+
+  async checkConflict(scope: TaskScope, excludeTaskId?: string): Promise<Task[]> {
+    return this.findConflicts(scope, excludeTaskId);
   }
 }
